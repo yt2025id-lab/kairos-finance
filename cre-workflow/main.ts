@@ -1,85 +1,106 @@
 /**
  * Kairos Finance - CRE Workflow Entry Point
  *
- * This workflow orchestrates AI-powered yield optimization for the Kairos Finance protocol.
- * It uses Chainlink CRE (Chainlink Runtime Environment) to:
- *
- * 1. Monitor KairosVault for StrategyRequested events (EVM Log Trigger)
- * 2. Read APY data from 4 lending protocols on Base via EVMClient
- * 3. Call Claude AI via HTTPClient for intelligent yield analysis
- * 4. Deliver recommendation on-chain via writeReport to KairosController
- * 5. Periodically check for rebalancing opportunities (Cron Trigger)
+ * AI-powered yield optimization orchestrated by Chainlink CRE.
+ * Monitors KairosVault for StrategyRequested events, reads live APY
+ * from 4 lending protocols on Base, calls Claude AI for analysis,
+ * and delivers the recommendation on-chain.
  *
  * Chainlink Products Used:
  * - CRE Workflow (orchestration)
- * - CRE EVMClient (on-chain reads from Aave, Compound, Moonwell)
- * - CRE HTTPClient (Claude API, Morpho GraphQL API)
- * - CRE writeReport (on-chain delivery)
+ * - CRE EVMClient (on-chain reads + writes)
+ * - CRE HTTPClient (Claude API + Morpho GraphQL)
  * - CRE Secrets (ANTHROPIC_API_KEY)
- * - Cron Trigger (periodic rebalance checks)
+ * - CRE Cron Trigger (periodic rebalance checks)
+ * - CRE EVM Log Trigger (StrategyRequested events)
  *
- * @see https://docs.chain.link/cre for CRE documentation
+ * @see https://docs.chain.link/cre
  */
 
-import { handleStrategyRequest, handleRebalanceCheck } from "./src/handler.js";
+import {
+  cre,
+  Runner,
+  hexToBase64,
+  getNetwork,
+} from "@chainlink/cre-sdk";
+import { z } from "zod";
+import { keccak256, toHex } from "viem";
+
+import { onStrategyRequested, onRebalanceCheck } from "./src/handler.js";
 
 // ============================================================
-// CRE Workflow Registration
-// ============================================================
-// In a full CRE deployment, this would use the CRE SDK:
-//
-// import { cre, type Runtime, type EvmLogPayload } from "@chainlink/cre-sdk";
-//
-// const initWorkflow = (config: Config) => {
-//   const logTrigger = new cre.capabilities.EvmLogTriggerCapability();
-//   const cronTrigger = new cre.capabilities.CronCapability();
-//
-//   return [
-//     cre.handler(
-//       logTrigger.trigger({
-//         addresses: [config.vaultAddress],
-//         topics: [STRATEGY_REQUESTED_TOPIC],
-//       }),
-//       async (runtime, payload) => {
-//         // Read APY from protocols via EVMClient
-//         const evmClient = new cre.capabilities.EvmClientCapability(BASE_CHAIN_SELECTOR);
-//         const httpClient = new cre.capabilities.HttpClientCapability();
-//
-//         // ... fetch APY data, call Claude, encode recommendation ...
-//
-//         // Write recommendation on-chain
-//         evmClient.writeReport(runtime, {
-//           toAddress: config.controllerAddress,
-//           data: encodedReport,
-//         });
-//       }
-//     ),
-//     cre.handler(
-//       cronTrigger.trigger({ schedule: "0 0 */6 * * *" }),
-//       async (runtime) => {
-//         await handleRebalanceCheck();
-//       }
-//     ),
-//   ];
-// };
-//
-// export default { initWorkflow };
+// Config Schema (validated at runtime by CRE)
 // ============================================================
 
-// For simulation and demo purposes, we export the handlers directly
-export { handleStrategyRequest, handleRebalanceCheck };
+export const configSchema = z.object({
+  schedule: z.string(),
+  vaultAddress: z.string(),
+  controllerAddress: z.string(),
+  anthropicApiUrl: z.string(),
+});
 
-// CLI simulation entry point
-async function main() {
-  console.log("=== Kairos Finance CRE Workflow Simulation ===\n");
+export type Config = z.infer<typeof configSchema>;
 
-  // Simulate a rebalance check to demonstrate protocol data fetching
-  await handleRebalanceCheck();
+// ============================================================
+// Network Configuration
+// ============================================================
 
-  console.log("\n=== Simulation Complete ===");
-  console.log("In production, this workflow is triggered by:");
-  console.log("  1. EVM Log Trigger: StrategyRequested events from KairosVault");
-  console.log("  2. Cron Trigger: Every 6 hours for rebalance checks");
+const BASE_NETWORK = getNetwork({
+  chainFamily: "evm",
+  chainSelectorName: "ethereum-mainnet-base-1",
+  isTestnet: false,
+});
+
+if (!BASE_NETWORK) {
+  throw new Error("Base network not found in CRE SDK");
 }
 
-main().catch(console.error);
+export const BASE_CHAIN_SELECTOR = BASE_NETWORK.chainSelector.selector;
+
+// ============================================================
+// Event Signature
+// ============================================================
+
+export const STRATEGY_REQUESTED_TOPIC = keccak256(
+  toHex("StrategyRequested(address,uint256,uint256,uint256)")
+);
+
+// ============================================================
+// Workflow Registration
+// ============================================================
+
+const initWorkflow = (config: Config) => {
+  const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
+  const cron = new cre.capabilities.CronCapability();
+
+  return [
+    // Trigger 1: EVM Log Trigger — fires when user requests yield optimization
+    cre.handler(
+      evmClient.logTrigger({
+        addresses: [hexToBase64(config.vaultAddress as `0x${string}`)],
+        topics: [
+          { values: [hexToBase64(STRATEGY_REQUESTED_TOPIC)] },
+          { values: [] }, // wildcard: any user address
+        ],
+      }),
+      onStrategyRequested
+    ),
+
+    // Trigger 2: Cron — periodic rebalance check
+    cre.handler(
+      cron.trigger({ schedule: config.schedule }),
+      onRebalanceCheck
+    ),
+  ];
+};
+
+// ============================================================
+// Entry Point
+// ============================================================
+
+export async function main() {
+  const runner = await Runner.newRunner<Config>({ configSchema });
+  await runner.run(initWorkflow);
+}
+
+main();

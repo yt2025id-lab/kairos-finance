@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import Link from "next/link";
@@ -22,6 +22,22 @@ const TIME_OPTIONS = [
   { label: "6 Months", value: 180 * 86400 },
   { label: "12 Months", value: 365 * 86400 },
 ];
+
+// Strategy address → protocol name mapping (Base Sepolia deployment)
+const PROTOCOL_NAMES: Record<string, string> = {
+  "0xeC6e6ABe3DF9B3bD471d66Bd759c63a5f8e58dEF": "Aave V3",
+  "0xec6e6abe3df9b3bd471d66bd759c63a5f8e58def": "Aave V3",
+  "0xB94980938429bc6eE6b6E0fD4AB836652119B981": "Compound V3",
+  "0xb94980938429bc6ee6b6e0fd4ab836652119b981": "Compound V3",
+  "0x76bF3c419BDAf509bD6c15d8Fbf26EDA96b676ce": "Moonwell",
+  "0x76bf3c419bdaf509bd6c15d8fbf26eda96b676ce": "Moonwell",
+  "0x045Ef6487EAf645B80781ac8c1504566FF419Cf0": "Morpho",
+  "0x045ef6487eaf645b80781ac8c1504566ff419cf0": "Morpho",
+};
+
+function getProtocolName(address: string): string {
+  return PROTOCOL_NAMES[address] || PROTOCOL_NAMES[address.toLowerCase()] || address.slice(0, 6) + "..." + address.slice(-4);
+}
 
 export default function AppPage() {
   const { address, isConnected } = useActiveWallet();
@@ -85,6 +101,142 @@ export default function AppPage() {
     args: address ? [address] : undefined,
     query: { enabled: !!address },
   });
+
+  // --- Live APY Reads (Base mainnet protocol addresses) ---
+
+  // Aave V3: PoolDataProvider.getReserveData(USDC) → liquidityRate (ray)
+  const AAVE_POOL_DATA_PROVIDER = "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad" as `0x${string}`;
+  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
+
+  const { data: aaveReserveData } = useReadContract({
+    address: AAVE_POOL_DATA_PROVIDER,
+    abi: [{
+      name: "getReserveData",
+      type: "function",
+      stateMutability: "view",
+      inputs: [{ name: "asset", type: "address" }],
+      outputs: [
+        { name: "unbacked", type: "uint256" },
+        { name: "accruedToTreasuryScaled", type: "uint256" },
+        { name: "totalAToken", type: "uint256" },
+        { name: "totalStableDebt", type: "uint256" },
+        { name: "totalVariableDebt", type: "uint256" },
+        { name: "liquidityRate", type: "uint256" },
+        { name: "variableBorrowRate", type: "uint256" },
+        { name: "stableBorrowRate", type: "uint256" },
+        { name: "averageStableBorrowRate", type: "uint256" },
+        { name: "liquidityIndex", type: "uint256" },
+        { name: "variableBorrowIndex", type: "uint256" },
+        { name: "lastUpdateTimestamp", type: "uint40" },
+      ],
+    }] as const,
+    functionName: "getReserveData",
+    args: [BASE_USDC],
+    chainId: 8453, // Base mainnet
+    query: { refetchInterval: 60_000 },
+  });
+
+  // Compound V3: Comet.getSupplyRate(getUtilization())
+  const COMPOUND_COMET = "0xb125E6687d4313864e53df431d5425969c15Eb2F" as `0x${string}`;
+
+  const { data: compoundUtilization } = useReadContract({
+    address: COMPOUND_COMET,
+    abi: [{
+      name: "getUtilization",
+      type: "function",
+      stateMutability: "view",
+      inputs: [],
+      outputs: [{ name: "", type: "uint256" }],
+    }] as const,
+    functionName: "getUtilization",
+    chainId: 8453,
+    query: { refetchInterval: 60_000 },
+  });
+
+  const { data: compoundSupplyRate } = useReadContract({
+    address: COMPOUND_COMET,
+    abi: [{
+      name: "getSupplyRate",
+      type: "function",
+      stateMutability: "view",
+      inputs: [{ name: "utilization", type: "uint256" }],
+      outputs: [{ name: "", type: "uint64" }],
+    }] as const,
+    functionName: "getSupplyRate",
+    args: compoundUtilization !== undefined ? [compoundUtilization as bigint] : undefined,
+    chainId: 8453,
+    query: { enabled: compoundUtilization !== undefined, refetchInterval: 60_000 },
+  });
+
+  // Moonwell: mToken.supplyRatePerTimestamp()
+  const MOONWELL_MUSDC = "0xEdc817A28E8B93B03976FBd4a3dDBc9f7D176c22" as `0x${string}`;
+
+  const { data: moonwellSupplyRate } = useReadContract({
+    address: MOONWELL_MUSDC,
+    abi: [{
+      name: "supplyRatePerTimestamp",
+      type: "function",
+      stateMutability: "view",
+      inputs: [],
+      outputs: [{ name: "", type: "uint256" }],
+    }] as const,
+    functionName: "supplyRatePerTimestamp",
+    chainId: 8453,
+    query: { refetchInterval: 60_000 },
+  });
+
+  // Morpho: fetch from GraphQL API
+  const [morphoApy, setMorphoApy] = useState<number | null>(null);
+
+  useEffect(() => {
+    async function fetchMorphoAPY() {
+      try {
+        const res = await fetch("https://blue-api.morpho.org/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `{
+              markets(
+                where: { chainId_in: [8453], loanAssetAddress_in: ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"] }
+                orderBy: TotalSupplyAssetsUsd
+                first: 5
+              ) { items { state { supplyApy } } }
+            }`,
+          }),
+        });
+        const data = await res.json();
+        const items = data?.data?.markets?.items || [];
+        let best = 0;
+        for (const m of items) {
+          const apy = (m.state?.supplyApy || 0) * 100;
+          if (apy > best) best = apy;
+        }
+        setMorphoApy(best);
+      } catch {
+        setMorphoApy(null);
+      }
+    }
+    fetchMorphoAPY();
+    const interval = setInterval(fetchMorphoAPY, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // --- Compute APY percentages ---
+
+  // Aave: liquidityRate is in ray (1e27), APY = rate / 1e25
+  const aaveApy = aaveReserveData
+    ? Number((aaveReserveData as readonly unknown[])[5] as bigint) / 1e25
+    : null;
+
+  // Compound: supplyRate is per-second scaled by 1e18, APY = rate * seconds_per_year / 1e16
+  const compoundApy = compoundSupplyRate !== undefined
+    ? Number(compoundSupplyRate as bigint) * 31536000 / 1e16
+    : null;
+
+  // Moonwell: supplyRatePerTimestamp is per-second scaled by 1e18
+  const moonwellApy = moonwellSupplyRate !== undefined
+    ? Number(moonwellSupplyRate as bigint) * 31536000 / 1e16
+    : null;
 
   // --- Write contracts ---
 
@@ -259,6 +411,17 @@ export default function AppPage() {
         </div>
       </div>
 
+      {/* Live Protocol APYs */}
+      <div className="mb-8">
+        <h3 className="text-sm font-medium text-gray-400 mb-3">Live Protocol Rates (Base)</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <APYCard name="Aave V3" apy={aaveApy} color="text-purple-400" />
+          <APYCard name="Compound V3" apy={compoundApy} color="text-green-400" />
+          <APYCard name="Moonwell" apy={moonwellApy} color="text-blue-400" />
+          <APYCard name="Morpho" apy={morphoApy} color="text-orange-400" />
+        </div>
+      </div>
+
       {/* Active Request */}
       {hasActiveRequest && (
         <div className="bg-gray-900 border border-blue-900 rounded-lg p-6 mb-6">
@@ -277,7 +440,7 @@ export default function AppPage() {
           <h3 className="font-medium mb-4">Active Position</h3>
 
           <div className="space-y-3">
-            <Row label="Protocol" value={pos.activeStrategy.slice(0, 6) + "..." + pos.activeStrategy.slice(-4)} />
+            <Row label="Protocol" value={getProtocolName(pos.activeStrategy)} />
             <Row
               label="Amount Deployed"
               value={`${formatUnits(pos.allocatedAmount, 6)} USDC`}
@@ -434,6 +597,18 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between">
       <span className="text-sm text-gray-500">{label}</span>
       <span className="text-sm font-mono">{value}</span>
+    </div>
+  );
+}
+
+function APYCard({ name, apy, color }: { name: string; apy: number | null; color: string }) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
+      <div className={`text-xs font-medium ${color} mb-1`}>{name}</div>
+      <div className="text-lg font-mono">
+        {apy !== null ? `${apy.toFixed(2)}%` : <span className="text-gray-600">--</span>}
+      </div>
+      <div className="text-xs text-gray-600">Supply APY</div>
     </div>
   );
 }

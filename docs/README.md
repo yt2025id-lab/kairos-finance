@@ -156,8 +156,8 @@ forge test -vv
 
 ```bash
 cd cre-workflow
-bun install
-bun run build
+npm install       # installs @chainlink/cre-sdk, zod, viem
+npm run build     # compiles TypeScript
 ```
 
 ### Frontend
@@ -169,6 +169,21 @@ cp .env.local.example .env.local
 # Fill in your Privy App ID and contract addresses
 npm run dev
 ```
+
+---
+
+## End-to-End Demo
+
+A Forge script proves the full Kairos Finance flow on Base Sepolia:
+
+```bash
+cd contracts
+forge script script/DemoE2E.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vvvv
+```
+
+This runs all 6 steps: faucet claim -> deposit -> request strategy -> AI report delivery -> position verification -> withdrawal.
+
+**File**: [contracts/script/DemoE2E.s.sol](../contracts/script/DemoE2E.s.sol)
 
 ---
 

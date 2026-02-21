@@ -1,3 +1,12 @@
+/**
+ * Morpho APY Reader — uses CRE HTTPClient for GraphQL API
+ *
+ * Morpho does not expose a simple on-chain APY view function.
+ * We query the Morpho Blue public GraphQL API for USDC market data on Base.
+ * This must be called inside runInNodeMode since it uses HTTPClient.
+ */
+
+import { cre, type NodeRuntime } from "@chainlink/cre-sdk";
 import type { ProtocolAPYData } from "../ai/types.js";
 
 const MORPHO_GRAPHQL_URL = "https://blue-api.morpho.org/graphql";
@@ -18,7 +27,10 @@ interface MorphoGraphQLResponse {
   };
 }
 
-export async function getMorphoAPY(): Promise<ProtocolAPYData> {
+/**
+ * Read Morpho APY via HTTPClient (must be called inside runInNodeMode)
+ */
+export function readMorphoAPY(nodeRuntime: NodeRuntime<any>): ProtocolAPYData {
   const query = `{
     markets(
       where: {
@@ -37,32 +49,27 @@ export async function getMorphoAPY(): Promise<ProtocolAPYData> {
     }
   }`;
 
-  const response = await fetch(MORPHO_GRAPHQL_URL, {
+  const httpClient = new cre.capabilities.HTTPClient();
+
+  const response = httpClient.sendRequest(nodeRuntime, {
+    url: MORPHO_GRAPHQL_URL,
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
+    body: btoa(JSON.stringify({ query })),
+  }).result();
 
-  if (!response.ok) {
+  if (response.statusCode !== 200) {
     // Fallback if Morpho API is unavailable
-    return {
-      name: "Morpho",
-      protocolId: 1,
-      apy: 0,
-      tvl: "N/A",
-    };
+    return { name: "Morpho", protocolId: 1, apy: 0, tvl: "N/A" };
   }
 
-  const data: MorphoGraphQLResponse = await response.json();
+  const data: MorphoGraphQLResponse = JSON.parse(
+    new TextDecoder().decode(response.body)
+  );
   const markets = data.data.markets.items;
 
   if (markets.length === 0) {
-    return {
-      name: "Morpho",
-      protocolId: 1,
-      apy: 0,
-      tvl: "N/A",
-    };
+    return { name: "Morpho", protocolId: 1, apy: 0, tvl: "N/A" };
   }
 
   // Aggregate: use the best APY market and sum TVL

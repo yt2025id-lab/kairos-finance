@@ -1,100 +1,146 @@
 /**
- * Kairos Finance CRE Workflow Handler
+ * Kairos Finance CRE Workflow Handlers
  *
- * This is the core orchestration logic that:
- * 1. Decodes the StrategyRequested event
- * 2. Reads APY data from 4 lending protocols on Base
- * 3. Calls Claude AI for intelligent yield analysis
- * 4. Returns encoded recommendation for on-chain delivery
+ * Core orchestration logic:
+ * 1. Decode StrategyRequested event from EVM Log Trigger
+ * 2. Read APY data from 4 lending protocols via EVMClient
+ * 3. Call Claude AI via HTTPClient for intelligent yield analysis
+ * 4. Encode recommendation and deliver on-chain via writeReport
  */
 
-import { createPublicClient, http } from "viem";
-import { base } from "viem/chains";
-import { fetchAllProtocolAPYs } from "./protocols/index.js";
-import { analyzeWithClaude } from "./ai/claude.js";
 import {
-  decodeStrategyRequestedEvent,
-  encodeRecommendation,
-  formatUSDC,
-} from "./utils/encoding.js";
-import type { StrategyRequestEvent } from "./ai/types.js";
+  cre,
+  bytesToHex,
+  consensusIdenticalAggregation,
+  prepareReportRequest,
+  type Runtime,
+  type NodeRuntime,
+} from "@chainlink/cre-sdk";
+import {
+  encodeAbiParameters,
+  parseAbiParameters,
+  decodeAbiParameters,
+  type Hex,
+} from "viem";
 
-// Configuration
-const BASE_RPC_URL = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { readAaveAPY } from "./protocols/aave.js";
+import { readCompoundAPY } from "./protocols/compound.js";
+import { readMoonwellAPY } from "./protocols/moonwell.js";
+import { analyzeAndRecommend } from "./ai/claude.js";
+import { buildYieldAnalysisPrompt } from "./ai/prompts.js";
+import { formatUSDC } from "./utils/encoding.js";
+import type { ProtocolAPYData, AIRecommendation } from "./ai/types.js";
+import type { Config } from "../main.js";
+import { BASE_CHAIN_SELECTOR } from "../main.js";
 
-/**
- * Main handler for StrategyRequested events
- * Called by the CRE trigger when a user requests yield optimization
- */
-export async function handleStrategyRequest(
-  logData: `0x${string}`,
-  logTopics: `0x${string}`[]
-): Promise<`0x${string}`> {
-  // 1. Decode the event
-  const event = decodeStrategyRequestedEvent(logData, logTopics);
-  console.log(
-    `[Kairos] Strategy requested by ${event.user}, amount: ${formatUSDC(event.amount)} USDC, horizon: ${Number(event.timeHorizon) / 86400} days`
+// ============================================================
+// Handler: StrategyRequested Event (EVM Log Trigger)
+// ============================================================
+
+export function onStrategyRequested(
+  runtime: Runtime<Config>,
+  log: { address: Uint8Array; txHash: Uint8Array; topics: Uint8Array[]; data: Uint8Array }
+): string {
+  runtime.log("[Kairos] StrategyRequested event detected");
+
+  // 1. Decode event data
+  const userTopic = bytesToHex(log.topics[1]);
+  const user = ("0x" + userTopic.slice(26)) as `0x${string}`;
+
+  const decoded = decodeAbiParameters(
+    parseAbiParameters("uint256, uint256, uint256"),
+    bytesToHex(log.data) as Hex
+  );
+  const amount = decoded[0];
+  const timeHorizon = decoded[1];
+
+  runtime.log(
+    `[Kairos] User: ${user}, Amount: ${formatUSDC(amount)} USDC, Horizon: ${Number(timeHorizon) / 86400} days`
   );
 
-  // 2. Create Base client for on-chain reads
-  const client = createPublicClient({
-    chain: base,
-    transport: http(BASE_RPC_URL),
-  });
+  // 2. Create EVMClient for Base chain
+  const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
 
-  // 3. Fetch APY data from all protocols in parallel
-  console.log("[Kairos] Fetching APY data from 4 protocols...");
-  const protocols = await fetchAllProtocolAPYs(client);
-  console.log("[Kairos] Protocol data:", JSON.stringify(protocols, null, 2));
+  // 3. Read APY from on-chain protocols (DON-level via EVMClient)
+  runtime.log("[Kairos] Reading APY data from on-chain protocols...");
 
-  // 4. Call Claude AI for analysis
-  console.log("[Kairos] Calling Claude AI for yield analysis...");
-  const recommendation = await analyzeWithClaude({
-    protocols,
-    timeHorizonSeconds: Number(event.timeHorizon),
-    depositAmount: formatUSDC(event.amount),
-    apiKey: ANTHROPIC_API_KEY,
-  });
+  const aaveAPY = readAaveAPY(evmClient, runtime);
+  runtime.log(`[Kairos] Aave V3: ${aaveAPY.apy.toFixed(2)}% APY`);
 
-  console.log("[Kairos] AI Recommendation:", JSON.stringify(recommendation, null, 2));
+  const compoundAPY = readCompoundAPY(evmClient, runtime);
+  runtime.log(`[Kairos] Compound V3: ${compoundAPY.apy.toFixed(2)}% APY`);
 
-  // 5. Encode recommendation for on-chain delivery
-  const encodedReport = encodeRecommendation(
-    event.user,
-    recommendation.protocolId,
-    recommendation.allocationBps,
-    recommendation.expectedAPY,
-    recommendation.reasoning
+  const moonwellAPY = readMoonwellAPY(evmClient, runtime);
+  runtime.log(`[Kairos] Moonwell: ${moonwellAPY.apy.toFixed(2)}% APY`);
+
+  // 4. Get API key at DON level via CRE Secrets
+  const apiKeySecret = runtime.getSecret({ id: "ANTHROPIC_API_KEY" }).result();
+  const apiKey = String(apiKeySecret);
+
+  // 5. Fetch Morpho APY + call Claude AI via HTTPClient (Node-level with consensus)
+  runtime.log("[Kairos] Calling Morpho API + Claude AI via HTTPClient...");
+
+  const protocols: ProtocolAPYData[] = [aaveAPY, compoundAPY, moonwellAPY];
+  const prompt = buildYieldAnalysisPrompt(protocols, Number(timeHorizon), formatUSDC(amount));
+
+  const recommendation = runtime.runInNodeMode(
+    (nodeRuntime: NodeRuntime<Config>) => {
+      return analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey);
+    },
+    consensusIdenticalAggregation<AIRecommendation>()
+  )().result();
+
+  runtime.log(
+    `[Kairos] AI Recommendation: Protocol ${recommendation.protocolId}, APY ${recommendation.expectedAPY} bps, Confidence: ${recommendation.confidence}`
   );
 
-  console.log(`[Kairos] Report encoded, delivering to KairosController...`);
-  return encodedReport;
+  // 6. Encode recommendation for on-chain delivery
+  const encodedPayload = encodeAbiParameters(
+    parseAbiParameters("address, uint8, uint256, uint256, string"),
+    [
+      user,
+      recommendation.protocolId,
+      BigInt(recommendation.allocationBps),
+      BigInt(recommendation.expectedAPY),
+      recommendation.reasoning,
+    ]
+  );
+
+  // 7. Generate signed report via DON consensus
+  runtime.log("[Kairos] Generating signed report...");
+  const reportRequest = prepareReportRequest(encodedPayload);
+  const report = runtime.report(reportRequest).result();
+
+  // 8. Deliver on-chain to KairosController via writeReport
+  runtime.log("[Kairos] Writing report on-chain to KairosController...");
+  evmClient.writeReport(runtime, {
+    receiver: runtime.config.controllerAddress,
+    report: report,
+    gasConfig: { gasLimit: "500000" },
+  }).result();
+
+  runtime.log("[Kairos] Report delivered successfully");
+  return "Strategy recommendation delivered";
 }
 
-/**
- * Rebalance check handler (cron trigger)
- * Checks if any active positions should be rebalanced
- */
-export async function handleRebalanceCheck(): Promise<void> {
-  console.log("[Kairos] Running periodic rebalance check...");
+// ============================================================
+// Handler: Rebalance Check (Cron Trigger)
+// ============================================================
 
-  const client = createPublicClient({
-    chain: base,
-    transport: http(BASE_RPC_URL),
-  });
+export function onRebalanceCheck(runtime: Runtime<Config>): string {
+  runtime.log("[Kairos] Running periodic rebalance check...");
 
-  // Fetch current protocol APYs
-  const protocols = await fetchAllProtocolAPYs(client);
+  const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
 
-  console.log("[Kairos] Current protocol APYs:");
-  for (const p of protocols) {
-    console.log(`  ${p.name}: ${p.apy.toFixed(2)}% (TVL: ${p.tvl})`);
-  }
+  const aave = readAaveAPY(evmClient, runtime);
+  const compound = readCompoundAPY(evmClient, runtime);
+  const moonwell = readMoonwellAPY(evmClient, runtime);
 
-  // In production, this would:
-  // 1. Read active positions from the vault contract
-  // 2. Compare current APY vs the protocol they're deposited in
-  // 3. If there's a significantly better option (>1% APY difference), trigger rebalance
-  console.log("[Kairos] Rebalance check complete.");
+  runtime.log("[Kairos] Current protocol APYs:");
+  runtime.log(`  Aave V3:     ${aave.apy.toFixed(2)}% (TVL: ${aave.tvl})`);
+  runtime.log(`  Compound V3: ${compound.apy.toFixed(2)}% (TVL: ${compound.tvl})`);
+  runtime.log(`  Moonwell:    ${moonwell.apy.toFixed(2)}% (TVL: ${moonwell.tvl})`);
+
+  runtime.log("[Kairos] Rebalance check complete");
+  return "complete";
 }

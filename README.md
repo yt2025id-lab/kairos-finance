@@ -13,11 +13,14 @@ Deposit USDC, set your time horizon, and let AI find the best lending rate acros
 # Smart Contracts
 cd contracts && forge build && forge test -vv
 
-# CRE Workflow
-cd cre-workflow && bun install
+# CRE Workflow (uses @chainlink/cre-sdk)
+cd cre-workflow && npm install && npm run build
 
 # Frontend
 cd frontend && npm install && npm run dev
+
+# End-to-End Demo (Base Sepolia)
+cd contracts && forge script script/DemoE2E.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast -vvvv
 ```
 
 ## Chainlink Products Used
