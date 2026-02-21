@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+contracts/out/
+contracts/cache/
+frontend/.next/
+frontend/out/
+cre-workflow/dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Foundry
+contracts/broadcast/
+
+# Misc
+*.log
+coverage/

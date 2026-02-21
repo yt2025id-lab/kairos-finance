@@ -1,0 +1,34 @@
+# Kairos Finance CRE Workflow Configuration
+# This workflow orchestrates AI-powered yield optimization on Base blockchain
+
+name: kairos-yield-optimizer
+version: "1.0.0"
+description: >
+  CRE workflow that monitors KairosVault for StrategyRequested events,
+  reads APY data from 4 lending protocols on Base (Aave, Compound, Moonwell, Morpho),
+  calls Claude AI for intelligent analysis, and writes the recommendation on-chain.
+
+triggers:
+  # Primary trigger: fires when user requests yield optimization
+  strategy_requested:
+    type: evm_log
+    config:
+      chainSelector: "base"  # Base mainnet
+      addresses:
+        - "${VAULT_ADDRESS}"
+      topics:
+        - "StrategyRequested(address,uint256,uint256,uint256)"
+
+  # Secondary trigger: periodic rebalance check
+  rebalance_check:
+    type: cron
+    config:
+      schedule: "0 0 */6 * * *"  # Every 6 hours
+
+capabilities:
+  - evm_client    # For on-chain reads and writes
+  - http_client   # For Claude API and Morpho GraphQL API
+
+secrets:
+  - name: ANTHROPIC_API_KEY
+    description: "API key for Claude AI analysis"
