@@ -6,8 +6,11 @@ import { PrivyProvider } from "@privy-io/react-auth";
 import { config } from "../lib/wagmi";
 import { useState, useEffect } from "react";
 import { baseSepolia, base } from "viem/chains";
+import { getPublicEnv } from "../lib/env";
+import { NetworkGuard, EnvWarning } from "../components";
 
-const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
+const env = getPublicEnv();
+const PRIVY_APP_ID = env.PRIVY_APP_ID;
 
 function PrivyWrapper({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -16,8 +19,13 @@ function PrivyWrapper({ children }: { children: React.ReactNode }) {
     setMounted(true);
   }, []);
 
-  // Skip Privy during SSR/prerendering and when no app ID is configured
-  if (!mounted || !PRIVY_APP_ID) {
+  // Show warning if Privy is not configured
+  if (!mounted) {
+    return <>{children}</>;
+  }
+
+  if (!PRIVY_APP_ID) {
+    // Privy disabled - pass through children
     return <>{children}</>;
   }
 
@@ -36,8 +44,8 @@ function PrivyWrapper({ children }: { children: React.ReactNode }) {
             createOnLogin: "users-without-wallets",
           },
         },
-        defaultChain: baseSepolia,
-        supportedChains: [baseSepolia, base],
+        defaultChain: base,
+        supportedChains: [base, baseSepolia],
       }}
     >
       {children}
@@ -52,9 +60,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyWrapper>
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={config}>
-          {children}
+          <EnvWarning>
+            <NetworkGuard allowedChains={base}>{children}</NetworkGuard>
+          </EnvWarning>
         </WagmiProvider>
       </QueryClientProvider>
     </PrivyWrapper>
   );
 }
+
