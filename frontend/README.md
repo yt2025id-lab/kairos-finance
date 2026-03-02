@@ -149,9 +149,76 @@ bun run build
 bun run start
 ```
 
+---
+
 ### Vercel Deployment
 
-Set all `NEXT_PUBLIC_*` environment variables in your Vercel project settings. The app is static-export compatible for edge deployment.
+#### Prerequisites
+- [ ] Vercel account (free tier supported)
+- [ ] **Privy App ID** from [console.privy.io](https://console.privy.io)
+- [ ] All contract addresses configured
+
+#### Step 1: Prepare Environment Variables
+
+1. Go to [Vercel Dashboard](https://vercel.com)
+2. Select your project
+3. Navigate to **Settings → Environment Variables**
+4. Add all required variables:
+
+**Critical (Authentication):**
+```env
+NEXT_PUBLIC_PRIVY_APP_ID=<your-privy-app-id>
+```
+
+**Required (Contracts):**
+```env
+NEXT_PUBLIC_VAULT_ADDRESS=0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855
+NEXT_PUBLIC_CONTROLLER_ADDRESS=0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF
+NEXT_PUBLIC_CHAIN_ID=84532
+```
+
+**Optional (RPC & Tokens):**
+```env
+NEXT_PUBLIC_BASE_SEPOLIA_RPC=https://sepolia.base.org
+NEXT_PUBLIC_USDC_ADDRESS=0x4F6D082b3130745687dd200822280946125570F5
+NEXT_PUBLIC_FAUCET_ADDRESS=0x4F6D082b3130745687dd200822280946125570F5
+```
+
+#### Step 2: Deploy
+
+**Option A — Git Integration (Recommended)**
+```bash
+git push origin main
+# Vercel auto-detects and deploys
+```
+
+**Option B — Vercel CLI**
+```bash
+npm install -g vercel
+cd frontend
+vercel deploy --prod
+```
+
+#### Step 3: Verify Deployment
+
+After deployment:
+1. Visit your Vercel URL
+2. Check browser console for warnings
+3. Click **Login** to test Privy integration
+4. If you see ⚠️ warnings about missing env vars, add them to Vercel project settings
+5. Redeploy from Vercel Dashboard
+
+---
+
+### Critical: Privy Configuration
+
+⚠️ **If `NEXT_PUBLIC_PRIVY_APP_ID` is missing:**
+- The app will still load
+- A banner will appear: "⚠️ Critical: Privy Not Configured"
+- **Wallet login will NOT work**
+- Users cannot authenticate
+
+✅ **To fix:** Get your App ID from [console.privy.io](https://console.privy.io) → add to Vercel → redeploy.
 
 ---
 
@@ -159,7 +226,7 @@ Set all `NEXT_PUBLIC_*` environment variables in your Vercel project settings. T
 
 See [`.env.example`](.env.example) for the full list with descriptions.
 
-> All `NEXT_PUBLIC_*` variables are embedded into the client bundle at build time. Never put secrets (API keys, private keys) in `NEXT_PUBLIC_*` variables.
+> All `NEXT_PUBLIC_*` variables are embedded into the client bundle at build time. **Never put secrets (API keys, private keys) in `NEXT_PUBLIC_*` variables.**
 
 ---
 
