@@ -18,6 +18,13 @@ export const metadata: Metadata = {
   description: "AI-Powered Yield Optimization on Base",
   icons: {
     icon: "/kairo-logo.png",
+    shortcut: "/kairo-logo.png",
+    apple: "/kairo-logo.png",
+  },
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
   },
 };
 
