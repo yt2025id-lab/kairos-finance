@@ -16,6 +16,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Kairos Finance",
   description: "AI-Powered Yield Optimization on Base",
+  icons: {
+    icon: "/kairo-logo.png",
+  },
 };
 
 export default function RootLayout({
