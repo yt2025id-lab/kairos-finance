@@ -7,6 +7,9 @@ export const CONTROLLER_ADDRESS = (process.env.NEXT_PUBLIC_CONTROLLER_ADDRESS ||
 export const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as `0x${string}`;
 
+export const FAUCET_ADDRESS = (process.env.NEXT_PUBLIC_FAUCET_ADDRESS ||
+  "0x4F6D082b3130745687dd200822280946125570F5") as `0x${string}`;
+
 export const VAULT_ABI = [
   {
     name: "deposit",
