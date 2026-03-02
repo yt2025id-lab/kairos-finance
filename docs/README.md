@@ -8,6 +8,22 @@ Kairos Finance is a DeFi protocol that uses artificial intelligence to optimize 
 
 ---
 
+## Deployed Contracts — Base Sepolia (Chain ID: 84532)
+
+> Last deployment: 2026-03-01
+
+| Contract | Address | Explorer |
+|----------|---------|---------|
+| `KairosVault` | `0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855` | [View](https://sepolia.basescan.org/address/0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855) |
+| `KairosController` | `0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF` | [View](https://sepolia.basescan.org/address/0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF) |
+| `FaucetUSDC` (testnet token) | `0x4F6D082b3130745687dd200822280946125570F5` | [View](https://sepolia.basescan.org/address/0x4F6D082b3130745687dd200822280946125570F5) |
+| `AaveV3Strategy` | `0xF130CE1Ee13f48FEEBc41a4d0dD0003900C56691` | [View](https://sepolia.basescan.org/address/0xF130CE1Ee13f48FEEBc41a4d0dD0003900C56691) |
+| `CompoundV3Strategy` | `0x9A62F36d290C3A4280C4F7A8A6a51EAA1288cfD4` | [View](https://sepolia.basescan.org/address/0x9A62F36d290C3A4280C4F7A8A6a51EAA1288cfD4) |
+| `MoonwellStrategy` | `0x19406467cC6E88Bd5F5bC932907c315AcC300Ccc` | [View](https://sepolia.basescan.org/address/0x19406467cC6E88Bd5F5bC932907c315AcC300Ccc) |
+| `MorphoStrategy` | `0x32B6bA1a9Ff550C21027A0C0E39CC9CECd82B0b9` | [View](https://sepolia.basescan.org/address/0x32B6bA1a9Ff550C21027A0C0E39CC9CECd82B0b9) |
+
+---
+
 ## Problem
 
 DeFi users face a fragmented lending landscape. On Base alone, there are multiple lending protocols (Aave, Compound, Moonwell, Morpho), each with different APY rates that fluctuate constantly. Choosing the right protocol requires understanding rate mechanics, protocol risk, TVL depth, and how these factors change over different time horizons. Most users either pick one protocol and stick with it, or spend significant time manually comparing rates.

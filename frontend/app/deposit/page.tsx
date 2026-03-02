@@ -12,6 +12,7 @@ import {
   CONTROLLER_ADDRESS,
   CONTROLLER_ABI,
   USDC_ADDRESS,
+  FAUCET_ADDRESS,
   ERC20_ABI,
   FAUCET_ABI,
 } from "../../lib/contracts";
@@ -95,11 +96,11 @@ export default function AppPage() {
   });
 
   const { data: cooldownRemaining, refetch: refetchCooldown } = useReadContract({
-    address: USDC_ADDRESS,
+    address: FAUCET_ADDRESS,
     abi: FAUCET_ABI,
     functionName: "cooldownRemaining",
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && FAUCET_ADDRESS !== "0x0000000000000000000000000000000000000000" },
   });
 
   // --- Live APY Reads (Base mainnet protocol addresses) ---
@@ -254,6 +255,14 @@ export default function AppPage() {
   const { isLoading: isWithdrawing } = useWaitForTransactionReceipt({ hash: withdrawTxHash });
   const { isLoading: isRedeeming } = useWaitForTransactionReceipt({ hash: redeemTxHash });
 
+  // Refetch balance + cooldown after faucet claim lands on-chain
+  useEffect(() => {
+    if (faucetSuccess) {
+      refetchUsdc();
+      refetchCooldown();
+    }
+  }, [faucetSuccess, refetchUsdc, refetchCooldown]);
+
   // --- Derived values ---
 
   const parsedAmount = amount ? parseUnits(amount, 6) : 0n;
@@ -281,7 +290,7 @@ export default function AppPage() {
 
   function handleClaimFaucet() {
     claimFaucet({
-      address: USDC_ADDRESS,
+      address: FAUCET_ADDRESS,
       abi: FAUCET_ABI,
       functionName: "faucet",
     });
@@ -364,32 +373,44 @@ export default function AppPage() {
       </nav>
 
       {/* Testnet Faucet */}
-      <div className="bg-gray-900 border border-yellow-900/50 rounded-lg p-4 mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-yellow-500 mb-1">Testnet Faucet</div>
-            <p className="text-xs text-gray-400">
-              Claim 100 test USDC to try Kairos Finance. One claim per hour.
-            </p>
+      {FAUCET_ADDRESS !== "0x0000000000000000000000000000000000000000" ? (
+        <div className="bg-gray-900 border border-yellow-900/50 rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-yellow-500 mb-1">Testnet Faucet</div>
+              <p className="text-xs text-gray-400">
+                Claim 100 test USDC to try Kairos Finance. One claim per hour.
+              </p>
+            </div>
+            <button
+              onClick={handleClaimFaucet}
+              disabled={isClaiming || !canClaim}
+              className="ml-4 flex-shrink-0 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:hover:bg-yellow-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              {isClaiming
+                ? "Claiming..."
+                : !canClaim
+                  ? `Wait ${Math.ceil(Number(cooldownRemaining || 0n) / 60)}m`
+                  : "Claim 100 USDC"}
+            </button>
           </div>
-          <button
-            onClick={handleClaimFaucet}
-            disabled={isClaiming || !canClaim}
-            className="ml-4 flex-shrink-0 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 disabled:hover:bg-yellow-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-          >
-            {isClaiming
-              ? "Claiming..."
-              : !canClaim
-                ? `Wait ${Math.ceil(Number(cooldownRemaining || 0n) / 60)}m`
-                : "Claim 100 USDC"}
-          </button>
+          {faucetSuccess && (
+            <p className="text-xs text-green-400 mt-2">
+              100 test USDC claimed successfully.
+            </p>
+          )}
         </div>
-        {faucetSuccess && (
-          <p className="text-xs text-green-400 mt-2">
-            100 test USDC claimed successfully.
+      ) : (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
+          <p className="text-xs text-gray-400">
+            💡 <strong>Faucet not available</strong> — Running on Base Mainnet. Faucet is only available on Base Sepolia testnet.
+            <br />
+            To use the testnet faucet, add
+            <code className="bg-gray-800 px-1 py-0.5 rounded text-green-400 mx-1">NEXT_PUBLIC_FAUCET_ADDRESS</code>
+            to your .env.local
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Balances */}
       <div className="grid grid-cols-2 gap-4 mb-8">

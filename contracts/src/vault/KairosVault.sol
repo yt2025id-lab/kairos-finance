@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IKairosVault} from "./IKairosVault.sol";
 import {IStrategy} from "../strategies/IStrategy.sol";
@@ -15,7 +16,7 @@ import {DataTypes} from "../libraries/DataTypes.sol";
 /// @notice ERC-4626 vault for user deposits with AI-powered yield optimization
 /// @dev Users deposit USDC, request a strategy with a time horizon, and the
 ///      CRE workflow analyzes protocols and executes the optimal strategy
-contract KairosVault is ERC4626, Ownable, IKairosVault {
+contract KairosVault is ERC4626, Ownable, IKairosVault, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ============ State ============
@@ -140,7 +141,7 @@ contract KairosVault is ERC4626, Ownable, IKairosVault {
     /// @notice Called when strategy is completed (withdrawal from protocol)
     /// @param user The user whose strategy completed
     /// @param returnedAmount The amount returned from the strategy
-    function completeStrategy(address user, uint256 returnedAmount) external onlyController {
+    function completeStrategy(address user, uint256 returnedAmount) external onlyController nonReentrant {
         DataTypes.UserPosition storage pos = _positions[user];
         if (!pos.isActive) revert NoActivePosition();
 
