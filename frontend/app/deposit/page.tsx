@@ -291,62 +291,253 @@ export default function AppPage() {
   const now = Math.floor(Date.now() / 1000);
   const daysRemaining = Math.max(0, Math.ceil((endTimestamp - now) / 86400));
 
-  // --- Handlers ---
+  // --- Handlers with Enhanced Debugging & Validation ---
 
   function handleClaimFaucet() {
-    claimFaucet({
-      address: FAUCET_ADDRESS,
-      abi: FAUCET_ABI,
-      functionName: "faucet",
-    });
+    console.log("[Faucet] Claiming 100 test USDC...");
+    try {
+      if (!address) {
+        console.error("[Faucet] ❌ Wallet not connected");
+        alert("Please connect your wallet first");
+        return;
+      }
+
+      console.log("[Faucet] 📍 Address:", address);
+      claimFaucet({
+        address: FAUCET_ADDRESS,
+        abi: FAUCET_ABI,
+        functionName: "faucet",
+      });
+      console.log("[Faucet] ✅ Transaction submitted");
+    } catch (err) {
+      console.error("[Faucet] ❌ Error:", err);
+      alert("Faucet claim failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleApprove() {
-    approve({
-      address: USDC_ADDRESS,
-      abi: ERC20_ABI,
-      functionName: "approve",
-      args: [VAULT_ADDRESS, parsedAmount],
-    });
+    console.log("[Approve] Starting USDC approval flow...");
+    try {
+      if (!address) {
+        console.error("[Approve] ❌ Wallet not connected");
+        alert("Please connect your wallet");
+        return;
+      }
+
+      if (parsedAmount <= 0n) {
+        console.error("[Approve] ❌ Amount must be greater than 0");
+        alert("Please enter a valid amount");
+        return;
+      }
+
+      console.log("[Approve] 📊 Details:", {
+        wallet: address,
+        spender: VAULT_ADDRESS,
+        amount: formatUnits(parsedAmount, 6) + " USDC",
+        parsedAmount: parsedAmount.toString(),
+      });
+
+      approve({
+        address: USDC_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [VAULT_ADDRESS, parsedAmount],
+      });
+      console.log("[Approve] ✅ Approval transaction submitted");
+    } catch (err) {
+      console.error("[Approve] ❌ Error:", err);
+      alert("Approval failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleDeposit() {
-    if (!address) return;
-    depositToVault({
-      address: VAULT_ADDRESS,
-      abi: VAULT_ABI,
-      functionName: "deposit",
-      args: [parsedAmount, address],
-    });
+    console.log("[Deposit] ═══════════════════════════════════════");
+    console.log("[Deposit] Starting deposit flow...");
+    
+    try {
+      // 1. Validate wallet connection
+      if (!address) {
+        console.error("[Deposit] ❌ Wallet not connected");
+        alert("Please connect your wallet first");
+        return;
+      }
+      console.log("[Deposit] ✅ Wallet connected:", address);
+
+      // 2. Validate amount
+      if (parsedAmount <= 0n) {
+        console.error("[Deposit] ❌ Invalid amount", { parsedAmount });
+        alert("Please enter amount > 0 USDC");
+        return;
+      }
+      console.log("[Deposit] ✅ Amount valid:", formatUnits(parsedAmount, 6), "USDC");
+
+      // 3. Validate minimum deposit
+      const MIN_DEPOSIT = parseUnits("10", 6);
+      if (parsedAmount < MIN_DEPOSIT) {
+        console.error("[Deposit] ❌ Amount below minimum", { 
+          amount: formatUnits(parsedAmount, 6),
+          minimum: "10",
+        });
+        alert("Minimum deposit is 10 USDC");
+        return;
+      }
+      console.log("[Deposit] ✅ Amount meets minimum");
+
+      // 4. Validate USDC balance
+      if (usdcBalance !== undefined) {
+        if ((usdcBalance as bigint) < parsedAmount) {
+          console.error("[Deposit] ❌ Insufficient USDC balance", {
+            balance: formatUnits(usdcBalance as bigint, 6),
+            required: formatUnits(parsedAmount, 6),
+          });
+          alert(`Insufficient balance. You have ${formatUnits(usdcBalance as bigint, 6)} USDC`);
+          return;
+        }
+        console.log("[Deposit] ✅ USDC balance sufficient:", formatUnits(usdcBalance as bigint, 6));
+      } else {
+        console.warn("[Deposit] ⚠️  Balance not loaded yet, proceeding...");
+      }
+
+      // 5. Validate approval
+      if (needsApproval) {
+        console.error("[Deposit] ❌ USDC not approved yet. Click 'Approve USDC' first");
+        alert("Please approve USDC spending first");
+        return;
+      }
+      console.log("[Deposit] ✅ USDC already approved");
+
+      // 6. Validate contract addresses
+      if (VAULT_ADDRESS === "0x0000000000000000000000000000000000000000") {
+        console.error("[Deposit] ❌ Vault address not configured");
+        alert("Error: Vault address not configured. Check NEXT_PUBLIC_VAULT_ADDRESS");
+        return;
+      }
+      console.log("[Deposit] ✅ Vault address valid:", VAULT_ADDRESS);
+
+      // 7. All checks passed - submit transaction
+      console.log("[Deposit] 📤 Submitting deposit transaction...");
+      console.log("[Deposit] Transaction args:", {
+        to: VAULT_ADDRESS,
+        functionName: "deposit",
+        args: [parsedAmount.toString(), address],
+      });
+
+      depositToVault({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: "deposit",
+        args: [parsedAmount, address],
+      });
+
+      console.log("[Deposit] ✅ Transaction submitted to wallet");
+      console.log("[Deposit] ═══════════════════════════════════════");
+    } catch (err) {
+      console.error("[Deposit] ❌ Error in handleDeposit:", err);
+      console.error("[Deposit] Stack:", err instanceof Error ? err.stack : "N/A");
+      alert("Deposit failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleRequestStrategy() {
-    requestStrategy({
-      address: VAULT_ADDRESS,
-      abi: VAULT_ABI,
-      functionName: "requestStrategy",
-      args: [BigInt(timeHorizon)],
-    });
+    console.log("[RequestStrategy] Starting strategy request...");
+    try {
+      if (!address) {
+        console.error("[RequestStrategy] ❌ Wallet not connected");
+        alert("Please connect wallet");
+        return;
+      }
+
+      if (timeHorizon <= 0) {
+        console.error("[RequestStrategy] ❌ Invalid time horizon");
+        alert("Please select a valid timeline");
+        return;
+      }
+
+      console.log("[RequestStrategy] 📊 Details:", {
+        wallet: address,
+        timeHorizon: timeHorizon + " seconds",
+        days: Math.floor(timeHorizon / 86400) + " days",
+      });
+
+      requestStrategy({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: "requestStrategy",
+        args: [BigInt(timeHorizon)],
+      });
+      console.log("[RequestStrategy] ✅ Request submitted to CRE workflow");
+    } catch (err) {
+      console.error("[RequestStrategy] ❌ Error:", err);
+      alert("Strategy request failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleWithdrawFromStrategy() {
-    if (!address) return;
-    withdrawFromStrategy({
-      address: CONTROLLER_ADDRESS,
-      abi: CONTROLLER_ABI,
-      functionName: "withdrawFromStrategy",
-      args: [address],
-    });
+    console.log("[Withdraw] Starting strategy withdrawal...");
+    try {
+      if (!address) {
+        console.error("[Withdraw] ❌ Wallet not connected");
+        alert("Please connect wallet");
+        return;
+      }
+
+      if (!pos?.isActive) {
+        console.error("[Withdraw] ❌ No active strategy position");
+        alert("No active position to withdraw");
+        return;
+      }
+
+      console.log("[Withdraw] 📊 Details:", {
+        wallet: address,
+        strategy: pos.activeStrategy,
+        amount: formatUnits(pos.allocatedAmount, 6) + " USDC",
+      });
+
+      withdrawFromStrategy({
+        address: CONTROLLER_ADDRESS,
+        abi: CONTROLLER_ABI,
+        functionName: "withdrawFromStrategy",
+        args: [address],
+      });
+      console.log("[Withdraw] ✅ Withdrawal submitted");
+    } catch (err) {
+      console.error("[Withdraw] ❌ Error:", err);
+      alert("Withdrawal failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   function handleRedeemAll() {
-    if (!address || !vaultBalance) return;
-    redeemFromVault({
-      address: VAULT_ADDRESS,
-      abi: VAULT_ABI,
-      functionName: "redeem",
-      args: [vaultBalance as bigint, address, address],
-    });
+    console.log("[Redeem] Starting vault redemption...");
+    try {
+      if (!address) {
+        console.error("[Redeem] ❌ Wallet not connected");
+        alert("Please connect wallet");
+        return;
+      }
+
+      if (!vaultBalance || (vaultBalance as bigint) <= 0n) {
+        console.error("[Redeem] ❌ No vault balance to redeem");
+        alert("No balance to redeem");
+        return;
+      }
+
+      console.log("[Redeem] 📊 Details:", {
+        wallet: address,
+        shares: vaultBalance?.toString(),
+        assets: assetsFromShares ? formatUnits(assetsFromShares as bigint, 6) + " USDC" : "N/A",
+      });
+
+      redeemFromVault({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: "redeem",
+        args: [vaultBalance as bigint, address, address],
+      });
+      console.log("[Redeem] ✅ Redemption submitted");
+    } catch (err) {
+      console.error("[Redeem] ❌ Error:", err);
+      alert("Redemption failed: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   // --- Not connected ---
@@ -376,6 +567,24 @@ export default function AppPage() {
         </Link>
         <LoginButton />
       </nav>
+
+      {/* Debug Info Panel (Development Helper) */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 mb-6 text-xs font-mono">
+          <div className="mb-2 text-gray-500">
+            <span className={address ? "text-green-400" : "text-red-400"}>● </span>
+            Wallet: {address ? address.slice(0, 10) + "..." : "❌ Not Connected"}
+          </div>
+          <div className="mb-2 text-gray-500">
+            <span className={VAULT_ADDRESS !== "0x0000000000000000000000000000000000000000" ? "text-green-400" : "text-red-400"}>● </span>
+            Vault: {VAULT_ADDRESS?.slice(0, 10)}...
+          </div>
+          <div className="text-gray-500">
+            <span className={usdcBalance !== undefined ? "text-green-400" : "text-yellow-400"}>● </span>
+            USDC Balance: {usdcBalance !== undefined ? formatUnits(usdcBalance as bigint, 6) : "🔄 Loading..."}
+          </div>
+        </div>
+      )}
 
       {/* Testnet Faucet */}
       {FAUCET_ADDRESS !== "0x0000000000000000000000000000000000000000" ? (
@@ -541,23 +750,38 @@ export default function AppPage() {
         {/* Approve / Deposit Buttons */}
         <div className="space-y-3">
           {parsedAmount > 0n && needsApproval && (
-            <button
-              onClick={handleApprove}
-              disabled={isApproving}
-              className="w-full bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg transition-colors"
-            >
-              {isApproving ? "Approving USDC..." : "Approve USDC"}
-            </button>
+            <>
+              <button
+                onClick={handleApprove}
+                disabled={isApproving}
+                className="w-full bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg transition-colors"
+              >
+                {isApproving ? "Approving USDC..." : "Approve USDC"}
+              </button>
+              <p className="text-xs text-gray-500">
+                First, you need to approve Kairos Vault to spend your USDC. This is a one-time security check.
+              </p>
+            </>
           )}
 
           {parsedAmount > 0n && !needsApproval && (
-            <button
-              onClick={handleDeposit}
-              disabled={isDepositing}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium py-3 rounded-lg transition-colors"
-            >
-              {isDepositing ? "Depositing..." : `Deposit ${amount} USDC`}
-            </button>
+            <>
+              <button
+                onClick={handleDeposit}
+                disabled={isDepositing || !address || VAULT_ADDRESS === "0x0000000000000000000000000000000000000000"}
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition-colors"
+              >
+                {isDepositing ? "Depositing..." : `Deposit ${amount} USDC`}
+              </button>
+              {!address && <p className="text-xs text-red-400">❌ Wallet not connected</p>}
+              {VAULT_ADDRESS === "0x0000000000000000000000000000000000000000" && <p className="text-xs text-red-400">❌ Vault address not configured</p>}
+            </>
+          )}
+
+          {parsedAmount === 0n && (
+            <p className="text-xs text-gray-500 text-center">
+              Enter an amount to deposit (minimum 10 USDC)
+            </p>
           )}
         </div>
       </div>
