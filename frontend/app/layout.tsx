@@ -17,8 +17,8 @@ export const metadata: Metadata = {
   title: "Kairos Finance",
   description: "AI-Powered Yield Optimization on Base",
   icons: {
-    icon: "/kairo-logo.png",
-    shortcut: "/kairo-logo.png",
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
     apple: "/kairo-logo.png",
   },
   manifest: "/manifest.json",
