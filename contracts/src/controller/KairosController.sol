@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IReceiver} from "../interfaces/IReceiver.sol";
 import {IKairosController} from "./IKairosController.sol";
@@ -87,9 +88,9 @@ contract KairosController is IReceiver, IKairosController, Ownable {
 
         emit RecommendationReceived(user, protocol, allocationBps, expectedAPY, reasoning);
 
-        // Calculate allocation amount
+        // Calculate allocation amount using safe math
         DataTypes.UserPosition memory pos = IKairosVault(vault).getUserPosition(user);
-        uint256 allocateAmount = (pos.depositAmount * allocationBps) / 10000;
+        uint256 allocateAmount = Math.mulDiv(pos.depositAmount, allocationBps, 10000, Math.Rounding.Floor);
 
         // Execute strategy via vault
         IKairosVault(vault).executeStrategy(user, strategy, allocateAmount);

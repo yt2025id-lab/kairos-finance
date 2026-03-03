@@ -33,6 +33,32 @@ import type { ProtocolAPYData, AIRecommendation } from "./ai/types.js";
 import type { Config } from "../main.js";
 import { BASE_CHAIN_SELECTOR } from "../main.js";
 
+/** Return a zero-APY placeholder when a live protocol read fails. */
+function makeProtocolFallback(name: string, protocolId: number): ProtocolAPYData {
+  return { name, protocolId, apy: 0, tvl: "N/A (read error)" };
+}
+
+/**
+ * Attempt to read protocol APY; log a warning and return a fallback on any error.
+ * This prevents a single RPC failure from aborting the entire recommendation.
+ */
+function safeReadProtocol(
+  label: string,
+  protocolId: number,
+  reader: () => ProtocolAPYData,
+  runtime: Runtime<Config>
+): { data: ProtocolAPYData; ok: boolean } {
+  try {
+    const data = reader();
+    runtime.log(`[Kairos] ${label}: ${data.apy.toFixed(2)}% APY (TVL: ${data.tvl})`);
+    return { data, ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    runtime.log(`[Kairos] WARNING: ${label} read failed — ${msg}. Using fallback (0% APY).`);
+    return { data: makeProtocolFallback(label, protocolId), ok: false };
+  }
+}
+
 // ============================================================
 // Handler: StrategyRequested Event (EVM Log Trigger)
 // ============================================================
@@ -41,86 +67,162 @@ export function onStrategyRequested(
   runtime: Runtime<Config>,
   log: { address: Uint8Array; txHash: Uint8Array; topics: Uint8Array[]; data: Uint8Array }
 ): string {
-  runtime.log("[Kairos] StrategyRequested event detected");
+  try {
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    runtime.log("[Kairos] StrategyRequested event detected");
+    runtime.log(`[Kairos] TX Hash: ${bytesToHex(log.txHash)}`);
+    runtime.log("[Kairos] ═══════════════════════════════════════");
 
-  // 1. Decode event data
-  const userTopic = bytesToHex(log.topics[1]);
-  const user = ("0x" + userTopic.slice(26)) as `0x${string}`;
+    // 1. Decode event data
+    let user: `0x${string}`;
+    let amount: bigint;
+    let timeHorizon: bigint;
 
-  const decoded = decodeAbiParameters(
-    parseAbiParameters("uint256, uint256, uint256"),
-    bytesToHex(log.data) as Hex
-  );
-  const amount = decoded[0];
-  const timeHorizon = decoded[1];
+    try {
+      const userTopic = bytesToHex(log.topics[1]);
+      user = ("0x" + userTopic.slice(26)) as `0x${string}`;
 
-  runtime.log(
-    `[Kairos] User: ${user}, Amount: ${formatUSDC(amount)} USDC, Horizon: ${Number(timeHorizon) / 86400} days`
-  );
+      const decoded = decodeAbiParameters(
+        parseAbiParameters("uint256, uint256, uint256"),
+        bytesToHex(log.data) as Hex
+      );
+      amount = decoded[0] as bigint;
+      timeHorizon = decoded[1] as bigint;
 
-  // 2. Create EVMClient for Base chain
-  const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
+      runtime.log("[Kairos] 📊 Event Parameters:");
+      runtime.log(`[Kairos]   User: ${user}`);
+      runtime.log(`[Kairos]   Amount: ${formatUSDC(amount)} USDC`);
+      runtime.log(`[Kairos]   Horizon: ${Number(timeHorizon) / 86400} days`);
+    } catch (decodeErr) {
+      throw new Error(
+        `Failed to decode event data: ${decodeErr instanceof Error ? decodeErr.message : String(decodeErr)}`
+      );
+    }
 
-  // 3. Read APY from on-chain protocols (DON-level via EVMClient)
-  runtime.log("[Kairos] Reading APY data from on-chain protocols...");
+    // 2. Create EVMClient for Base chain
+    const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
 
-  const aaveAPY = readAaveAPY(evmClient, runtime);
-  runtime.log(`[Kairos] Aave V3: ${aaveAPY.apy.toFixed(2)}% APY`);
+    // 3. Read APY from on-chain protocols (DON-level via EVMClient)
+    runtime.log("[Kairos] 📈 Reading APY data from on-chain protocols...");
 
-  const compoundAPY = readCompoundAPY(evmClient, runtime);
-  runtime.log(`[Kairos] Compound V3: ${compoundAPY.apy.toFixed(2)}% APY`);
+    const { data: aaveAPY, ok: aaveOk } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClient, runtime), runtime);
+    const { data: compoundAPY, ok: compoundOk } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClient, runtime), runtime);
+    const { data: moonwellAPY, ok: moonwellOk } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClient, runtime), runtime);
 
-  const moonwellAPY = readMoonwellAPY(evmClient, runtime);
-  runtime.log(`[Kairos] Moonwell: ${moonwellAPY.apy.toFixed(2)}% APY`);
+    const successCount = [aaveOk, compoundOk, moonwellOk].filter(Boolean).length;
+    if (successCount === 0) {
+      throw new Error(
+        "[Kairos] ❌ All on-chain protocol reads failed — cannot generate recommendation. " +
+        "Check RPC connectivity and protocol contract addresses."
+      );
+    }
+    runtime.log(`[Kairos] ✅ Successfully read ${successCount}/3 on-chain protocols`);
 
-  // 4. Get API key at DON level via CRE Secrets
-  const apiKeySecret = runtime.getSecret({ id: "ANTHROPIC_API_KEY" }).result();
-  const apiKey = String(apiKeySecret);
+    // 4. Get API key at DON level via CRE Secrets
+    runtime.log("[Kairos] 🔑 Retrieving ANTHROPIC_API_KEY from CRE Secrets...");
+    let apiKey: string;
+    try {
+      const apiKeySecret = runtime.getSecret({ id: "ANTHROPIC_API_KEY" }).result();
+      apiKey = String(apiKeySecret);
+      if (!apiKey || apiKey === "null" || apiKey === "undefined" || apiKey.length === 0) {
+        throw new Error("Secret returned empty or invalid value");
+      }
+      runtime.log("[Kairos] ✅ ANTHROPIC_API_KEY loaded successfully");
+    } catch (secretErr) {
+      throw new Error(
+        `Failed to retrieve ANTHROPIC_API_KEY secret: ${secretErr instanceof Error ? secretErr.message : String(secretErr)}. ` +
+        `Ensure secret is configured in CRE dashboard: https://cre.chain.link/secrets`
+      );
+    }
 
-  // 5. Fetch Morpho APY + call Claude AI via HTTPClient (Node-level with consensus)
-  runtime.log("[Kairos] Calling Morpho API + Claude AI via HTTPClient...");
+    // 5. Fetch Morpho APY + call Claude AI via HTTPClient (Node-level with consensus)
+    runtime.log("[Kairos] 🤖 Calling Claude AI for yield analysis...");
 
-  const protocols: ProtocolAPYData[] = [aaveAPY, compoundAPY, moonwellAPY];
-  const prompt = buildYieldAnalysisPrompt(protocols, Number(timeHorizon), formatUSDC(amount));
+    const protocols: ProtocolAPYData[] = [aaveAPY, compoundAPY, moonwellAPY];
+    const prompt = buildYieldAnalysisPrompt(protocols, Number(timeHorizon), formatUSDC(amount));
 
-  const recommendation = runtime.runInNodeMode(
-    (nodeRuntime: NodeRuntime<Config>) => {
-      return analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey);
-    },
-    consensusIdenticalAggregation<AIRecommendation>()
-  )().result();
+    let recommendation: AIRecommendation;
+    try {
+      recommendation = runtime.runInNodeMode(
+        (nodeRuntime: NodeRuntime<Config>) => {
+          return analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey);
+        },
+        consensusIdenticalAggregation<AIRecommendation>()
+      )().result();
+    } catch (aiErr) {
+      throw new Error(
+        `Claude AI analysis failed: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}. ` +
+        `Check Anthropic API key validity and request format.`
+      );
+    }
 
-  runtime.log(
-    `[Kairos] AI Recommendation: Protocol ${recommendation.protocolId}, APY ${recommendation.expectedAPY} bps, Confidence: ${recommendation.confidence}`
-  );
+    runtime.log(`[Kairos] ✅ AI Recommendation received:`);
+    runtime.log(`[Kairos]   Protocol: ${recommendation.protocolId}`);
+    runtime.log(`[Kairos]   Allocation: ${recommendation.allocationBps} bps`);
+    runtime.log(`[Kairos]   Expected APY: ${recommendation.expectedAPY}`);
+    runtime.log(`[Kairos]   Confidence: ${recommendation.confidence}`);
 
-  // 6. Encode recommendation for on-chain delivery
-  const encodedPayload = encodeAbiParameters(
-    parseAbiParameters("address, uint8, uint256, uint256, string"),
-    [
-      user,
-      recommendation.protocolId,
-      BigInt(recommendation.allocationBps),
-      BigInt(recommendation.expectedAPY),
-      recommendation.reasoning,
-    ]
-  );
+    // 6. Encode recommendation for on-chain delivery
+    runtime.log("[Kairos] 🔐 Encoding recommendation payload...");
+    let encodedPayload: Hex;
+    try {
+      encodedPayload = encodeAbiParameters(
+        parseAbiParameters("address, uint8, uint256, uint256, string"),
+        [
+          user,
+          recommendation.protocolId,
+          BigInt(recommendation.allocationBps),
+          BigInt(recommendation.expectedAPY),
+          recommendation.reasoning,
+        ]
+      );
+      runtime.log(`[Kairos] ✅ Payload encoded (${encodedPayload.length} bytes)`);
+    } catch (encodeErr) {
+      throw new Error(
+        `Failed to encode recommendation: ${encodeErr instanceof Error ? encodeErr.message : String(encodeErr)}`
+      );
+    }
 
-  // 7. Generate signed report via DON consensus
-  runtime.log("[Kairos] Generating signed report...");
-  const reportRequest = prepareReportRequest(encodedPayload);
-  const report = runtime.report(reportRequest).result();
+    // 7. Generate signed report via DON consensus
+    runtime.log("[Kairos] 📝 Generating DON-signed report...");
+    let reportResult: any;
+    try {
+      const reportRequest = prepareReportRequest(encodedPayload);
+      reportResult = runtime.report(reportRequest).result();
+      runtime.log(`[Kairos] ✅ Report generated and ready`);
+    } catch (reportErr) {
+      throw new Error(
+        `Failed to generate report: ${reportErr instanceof Error ? reportErr.message : String(reportErr)}`
+      );
+    }
 
-  // 8. Deliver on-chain to KairosController via writeReport
-  runtime.log("[Kairos] Writing report on-chain to KairosController...");
-  evmClient.writeReport(runtime, {
-    receiver: runtime.config.controllerAddress,
-    report: report,
-    gasConfig: { gasLimit: "500000" },
-  }).result();
+    // 8. Deliver on-chain to KairosController via writeReport
+    runtime.log("[Kairos] 🔗 Writing report on-chain to KairosController...");
+    try {
+      evmClient.writeReport(runtime, {
+        receiver: runtime.config.controllerAddress,
+        report: reportResult,
+        gasConfig: { gasLimit: "500000" },
+      }).result();
+      runtime.log(`[Kairos] ✅ Report delivered successfully to ${runtime.config.controllerAddress}`);
+    } catch (writeErr) {
+      throw new Error(
+        `Failed to write report on-chain: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}. ` +
+        `Check KairosController exists at ${runtime.config.controllerAddress}`
+      );
+    }
 
-  runtime.log("[Kairos] Report delivered successfully");
-  return "Strategy recommendation delivered";
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    runtime.log("[Kairos] ✨ Strategy recommendation delivered successfully");
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    return "Strategy recommendation delivered";
+
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    runtime.log("[Kairos] ❌ ERROR: " + errorMsg);
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    throw err;
+  }
 }
 
 // ============================================================
@@ -128,19 +230,37 @@ export function onStrategyRequested(
 // ============================================================
 
 export function onRebalanceCheck(runtime: Runtime<Config>): string {
-  runtime.log("[Kairos] Running periodic rebalance check...");
+  try {
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    runtime.log("[Kairos] ⏱️  Running periodic rebalance check...");
+    runtime.log("[Kairos] ═══════════════════════════════════════");
 
-  const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
+    const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
 
-  const aave = readAaveAPY(evmClient, runtime);
-  const compound = readCompoundAPY(evmClient, runtime);
-  const moonwell = readMoonwellAPY(evmClient, runtime);
+    runtime.log("[Kairos] 📈 Reading current protocol APYs...");
+    const { data: aave } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClient, runtime), runtime);
+    const { data: compound } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClient, runtime), runtime);
+    const { data: moonwell } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClient, runtime), runtime);
 
-  runtime.log("[Kairos] Current protocol APYs:");
-  runtime.log(`  Aave V3:     ${aave.apy.toFixed(2)}% (TVL: ${aave.tvl})`);
-  runtime.log(`  Compound V3: ${compound.apy.toFixed(2)}% (TVL: ${compound.tvl})`);
-  runtime.log(`  Moonwell:    ${moonwell.apy.toFixed(2)}% (TVL: ${moonwell.tvl})`);
+    runtime.log("[Kairos] 📊 Current Market Snapshot:");
+    runtime.log(`[Kairos]   Aave V3:     ${aave.apy.toFixed(2)}% APY (TVL: ${aave.tvl})`);
+    runtime.log(`[Kairos]   Compound V3: ${compound.apy.toFixed(2)}% APY (TVL: ${compound.tvl})`);
+    runtime.log(`[Kairos]   Moonwell:    ${moonwell.apy.toFixed(2)}% APY (TVL: ${moonwell.tvl})`);
 
-  runtime.log("[Kairos] Rebalance check complete");
-  return "complete";
+    const maxAPY = Math.max(aave.apy, compound.apy, moonwell.apy);
+    const topProtocol = 
+      maxAPY === aave.apy ? "Aave V3" :
+      maxAPY === compound.apy ? "Compound V3" : "Moonwell";
+
+    runtime.log(`[Kairos] 🏆 Best yield: ${topProtocol} at ${maxAPY.toFixed(2)}%`);
+    runtime.log("[Kairos] ═══════════════════════════════════════");
+    runtime.log("[Kairos] ✅ Rebalance check complete");
+
+    return "complete";
+
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    runtime.log("[Kairos] ❌ Rebalance check failed: " + errorMsg);
+    return "failed";
+  }
 }

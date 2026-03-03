@@ -1,12 +1,15 @@
-/**
- * Smart Contract ABIs
- * These are the function signatures and event definitions for interacting with contracts
- */
+export const VAULT_ADDRESS = (process.env.NEXT_PUBLIC_VAULT_ADDRESS ||
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
-/**
- * KairosVault ABI
- * Main vault contract for deposits, withdrawals, and strategy requests
- */
+export const CONTROLLER_ADDRESS = (process.env.NEXT_PUBLIC_CONTROLLER_ADDRESS ||
+  "0x0000000000000000000000000000000000000000") as `0x${string}`;
+
+export const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS ||
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as `0x${string}`;
+
+export const FAUCET_ADDRESS = (process.env.NEXT_PUBLIC_FAUCET_ADDRESS ||
+  "0x4F6D082b3130745687dd200822280946125570F5") as `0x${string}`;
+
 export const VAULT_ABI = [
   {
     name: "deposit",
@@ -123,10 +126,6 @@ export const VAULT_ABI = [
   },
 ] as const;
 
-/**
- * ERC20 Standard ABI
- * Used for USDC approval and balance checks
- */
 export const ERC20_ABI = [
   {
     name: "approve",
@@ -162,25 +161,8 @@ export const ERC20_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],
   },
-  {
-    name: "symbol",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
-  },
-  {
-    name: "name",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
-  },
 ] as const;
 
-/**
- * Testnet USDC Faucet ABI
- */
 export const FAUCET_ABI = [
   {
     name: "faucet",
@@ -212,10 +194,6 @@ export const FAUCET_ABI = [
   },
 ] as const;
 
-/**
- * KairosController ABI
- * Handles strategy recommendations from AI and withdrawals
- */
 export const CONTROLLER_ABI = [
   {
     name: "withdrawFromStrategy",

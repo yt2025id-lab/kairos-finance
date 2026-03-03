@@ -39,10 +39,11 @@ function LoginButtonInner() {
     );
   }
 
+  const walletAddress = wallets[0]?.address;
   const displayName = user?.email?.address
     || user?.google?.email
-    || (wallets[0]?.address
-      ? `${wallets[0].address.slice(0, 6)}...${wallets[0].address.slice(-4)}`
+    || (walletAddress
+      ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
       : "Connected");
 
   return (

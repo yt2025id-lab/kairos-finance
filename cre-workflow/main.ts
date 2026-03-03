@@ -42,20 +42,49 @@ export const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 // ============================================================
-// Network Configuration
+// Network Configuration (Staging = Base Sepolia, Prod = Base)
 // ============================================================
 
-const BASE_NETWORK = getNetwork({
-  chainFamily: "evm",
-  chainSelectorName: "ethereum-mainnet-base-1",
-  isTestnet: false,
-});
+/**
+ * Determine network based on config file:
+ * - config.staging.json → Base Sepolia (testnet)
+ * - config.json → Base Mainnet (production)
+ *
+ * CRE SDK chain selectors:
+ * - Base Sepolia: "ethereum-testnet-base-sepolia-1" (chainId: 84532)
+ * - Base Mainnet: "ethereum-mainnet-base-1" (chainId: 8453)
+ */
+function getBaseNetwork(): ReturnType<typeof getNetwork> {
+  // Check if we're using staging config (file name or env)
+  const isStaging = process.env.CRE_CONFIG_FILE?.includes("staging") ?? true;
 
-if (!BASE_NETWORK) {
-  throw new Error("Base network not found in CRE SDK");
+  const networkConfig = {
+    chainFamily: "evm" as const,
+    chainSelectorName: isStaging
+      ? "ethereum-testnet-base-sepolia-1"
+      : "ethereum-mainnet-base-1",
+    isTestnet: isStaging,
+  };
+
+  const network = getNetwork(networkConfig);
+
+  if (!network) {
+    throw new Error(
+      `Base ${isStaging ? "Sepolia" : "Mainnet"} network not found in CRE SDK. ` +
+      `Check network availability at https://docs.chain.link/chainlink-functions/supported-networks`
+    );
+  }
+
+  console.log(
+    `[Kairos] Using Base ${isStaging ? "Sepolia (testnet)" : "Mainnet (production)"} - ` +
+    `Chain ID: ${networkConfig.chainSelectorName}`
+  );
+
+  return network;
 }
 
-export const BASE_CHAIN_SELECTOR = BASE_NETWORK.chainSelector.selector;
+const BASE_NETWORK = getBaseNetwork();
+export const BASE_CHAIN_SELECTOR = BASE_NETWORK!.chainSelector.selector;
 
 // ============================================================
 // Event Signature
