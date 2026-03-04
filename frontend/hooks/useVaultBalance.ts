@@ -69,8 +69,8 @@ export function useVaultBalance(): VaultBalance {
   }, [positionData]);
 
   return {
-    shares: (shares as bigint) || BigInt(0),
-    sharesFormatted: formatUSDC((shares as bigint) || BigInt(0)),
+    shares: (shares as bigint | undefined) ?? BigInt(0),
+    sharesFormatted: formatUSDC((shares as bigint | undefined) ?? BigInt(0)),
     position,
     isLoading: sharesLoading || positionLoading,
     error,
