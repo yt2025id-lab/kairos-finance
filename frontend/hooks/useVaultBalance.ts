@@ -49,24 +49,20 @@ export function useVaultBalance(): VaultBalance {
 
   // Parse position data
   useEffect(() => {
-    if (positionData && Array.isArray(positionData)) {
-      const [
-        depositAmount,
-        timeHorizon,
-        depositTimestamp,
-        activeStrategy,
-        allocatedAmount,
-        isActive,
-      ] = positionData;
-
-      setPosition({
-        depositAmount: depositAmount as bigint,
-        timeHorizon: timeHorizon as bigint,
-        depositTimestamp: depositTimestamp as bigint,
-        activeStrategy: activeStrategy as `0x${string}`,
-        allocatedAmount: allocatedAmount as bigint,
-        isActive: isActive as boolean,
-      });
+    if (positionData && Array.isArray(positionData) && positionData.length === 6) {
+      try {
+        const pos = positionData as any[];
+        setPosition({
+          depositAmount: pos[0] as bigint,
+          timeHorizon: pos[1] as bigint,
+          depositTimestamp: pos[2] as bigint,
+          activeStrategy: pos[3] as `0x${string}`,
+          allocatedAmount: pos[4] as bigint,
+          isActive: pos[5] as boolean,
+        });
+      } catch (err) {
+        setError(new Error("Failed to parse position data"));
+      }
     }
   }, [positionData]);
 
