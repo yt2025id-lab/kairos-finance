@@ -88,8 +88,8 @@ export function useTotalVaultAssets() {
   });
 
   return {
-    totalAssets: (totalAssets as bigint) || BigInt(0),
-    totalAssetsFormatted: formatUSDC((totalAssets as bigint) || BigInt(0)),
+    totalAssets: (totalAssets as bigint | undefined) ?? BigInt(0),
+    totalAssetsFormatted: formatUSDC((totalAssets as bigint | undefined) ?? BigInt(0)),
     isLoading,
   };
 }
@@ -112,7 +112,7 @@ export function useHasActiveRequest() {
   });
 
   return {
-    hasActiveRequest: (hasActiveRequest as boolean) || false,
+    hasActiveRequest: (hasActiveRequest as boolean | undefined) ?? false,
     isLoading,
   };
 }
