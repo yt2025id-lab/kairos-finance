@@ -2,18 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
+import { formatUnits } from "viem";
 import Link from "next/link";
 import { LoginButton, LoginCard } from "../../components/LoginButton";
 import { useActiveWallet } from "../../hooks/useActiveWallet";
+import { useDepositFlow } from "../../hooks/useDepositFlow";
 import {
   VAULT_ADDRESS,
   VAULT_ABI,
   CONTROLLER_ADDRESS,
   CONTROLLER_ABI,
-  USDC_ADDRESS,
   FAUCET_ADDRESS,
-  ERC20_ABI,
   FAUCET_ABI,
 } from "../../lib/contracts";
 
@@ -23,6 +22,19 @@ const TIME_OPTIONS = [
   { label: "6 Months", value: 180 * 86400 },
   { label: "12 Months", value: 365 * 86400 },
 ];
+
+// ---------------------------------------------------------------------------
+// DEMO MODE — Live Protocol Rates uses static mock data only
+// ---------------------------------------------------------------------------
+
+const DEMO_MODE = true;
+
+const DEMO_RATES = {
+  aave: 3.42,
+  compound: 2.98,
+  moonwell: 3.11,
+  morpho: 3.67,
+};
 
 // Strategy address → protocol name mapping (Base Sepolia deployment)
 const PROTOCOL_NAMES: Record<string, string> = {
@@ -42,28 +54,12 @@ function getProtocolName(address: string): string {
 
 export default function AppPage() {
   const { address, isConnected } = useActiveWallet();
-  const [amount, setAmount] = useState("");
   const [timeHorizon, setTimeHorizon] = useState(TIME_OPTIONS[2].value);
+  const deposit = useDepositFlow(address);
 
   // --- Read contracts ---
 
-  const { data: usdcBalance, refetch: refetchUsdc } = useReadContract({
-    address: USDC_ADDRESS,
-    abi: ERC20_ABI,
-    functionName: "balanceOf",
-    args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 10_000 },
-  });
-
-  const { data: allowance } = useReadContract({
-    address: USDC_ADDRESS,
-    abi: ERC20_ABI,
-    functionName: "allowance",
-    args: address ? [address, VAULT_ADDRESS] : undefined,
-    query: { enabled: !!address },
-  });
-
-  const { data: vaultBalance } = useReadContract({
+  const { data: vaultBalance, refetch: refetchVault } = useReadContract({
     address: VAULT_ADDRESS,
     abi: VAULT_ABI,
     functionName: "balanceOf",
@@ -103,175 +99,43 @@ export default function AppPage() {
     query: { enabled: !!address && FAUCET_ADDRESS !== "0x0000000000000000000000000000000000000000" },
   });
 
-  // --- Live APY Reads (Base mainnet protocol addresses) ---
+  // --- Live APY Reads (DEMO MODE ONLY) ---
+  // All APY data is static for demo purposes
 
-  // Aave V3: PoolDataProvider.getReserveData(USDC) → liquidityRate (ray)
-  const AAVE_POOL_DATA_PROVIDER = "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad" as `0x${string}`;
-  const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as `0x${string}`;
-
-  const { data: aaveReserveData, isLoading: isLoadingAave } = useReadContract({
-    address: AAVE_POOL_DATA_PROVIDER,
-    abi: [{
-      name: "getReserveData",
-      type: "function",
-      stateMutability: "view",
-      inputs: [{ name: "asset", type: "address" }],
-      outputs: [
-        { name: "unbacked", type: "uint256" },
-        { name: "accruedToTreasuryScaled", type: "uint256" },
-        { name: "totalAToken", type: "uint256" },
-        { name: "totalStableDebt", type: "uint256" },
-        { name: "totalVariableDebt", type: "uint256" },
-        { name: "liquidityRate", type: "uint256" },
-        { name: "variableBorrowRate", type: "uint256" },
-        { name: "stableBorrowRate", type: "uint256" },
-        { name: "averageStableBorrowRate", type: "uint256" },
-        { name: "liquidityIndex", type: "uint256" },
-        { name: "variableBorrowIndex", type: "uint256" },
-        { name: "lastUpdateTimestamp", type: "uint40" },
-      ],
-    }] as const,
-    functionName: "getReserveData",
-    args: [BASE_USDC],
-    chainId: 8453, // Base mainnet
-    query: { refetchInterval: 60_000 },
-  });
-
-  // Compound V3: Comet.getSupplyRate(getUtilization())
-  const COMPOUND_COMET = "0xb125E6687d4313864e53df431d5425969c15Eb2F" as `0x${string}`;
-
-  const { data: compoundUtilization, isLoading: isLoadingUtil } = useReadContract({
-    address: COMPOUND_COMET,
-    abi: [{
-      name: "getUtilization",
-      type: "function",
-      stateMutability: "view",
-      inputs: [],
-      outputs: [{ name: "", type: "uint256" }],
-    }] as const,
-    functionName: "getUtilization",
-    chainId: 8453,
-    query: { refetchInterval: 60_000 },
-  });
-
-  const { data: compoundSupplyRate, isLoading: isLoadingCompound } = useReadContract({
-    address: COMPOUND_COMET,
-    abi: [{
-      name: "getSupplyRate",
-      type: "function",
-      stateMutability: "view",
-      inputs: [{ name: "utilization", type: "uint256" }],
-      outputs: [{ name: "", type: "uint64" }],
-    }] as const,
-    functionName: "getSupplyRate",
-    args: compoundUtilization !== undefined ? [compoundUtilization as bigint] : undefined,
-    chainId: 8453,
-    query: { enabled: compoundUtilization !== undefined, refetchInterval: 60_000 },
-  });
-  const isLoadingCompoundAll = isLoadingUtil || isLoadingCompound;
-
-  // Moonwell: mToken.supplyRatePerTimestamp()
-  const MOONWELL_MUSDC = "0xEdc817A28E8B93B03976FBd4a3dDBc9f7D176c22" as `0x${string}`;
-
-  const { data: moonwellSupplyRate, isLoading: isLoadingMoonwell } = useReadContract({
-    address: MOONWELL_MUSDC,
-    abi: [{
-      name: "supplyRatePerTimestamp",
-      type: "function",
-      stateMutability: "view",
-      inputs: [],
-      outputs: [{ name: "", type: "uint256" }],
-    }] as const,
-    functionName: "supplyRatePerTimestamp",
-    chainId: 8453,
-    query: { refetchInterval: 60_000 },
-  });
-
-  // Morpho: fetch from GraphQL API
-  const [morphoApy, setMorphoApy] = useState<number | null>(null);
-  const [isLoadingMorpho, setIsLoadingMorpho] = useState(true);
-
-  useEffect(() => {
-    async function fetchMorphoAPY() {
-      try {
-        const res = await fetch("https://blue-api.morpho.org/graphql", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{
-              markets(
-                where: { chainId_in: [8453], loanAssetAddress_in: ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"] }
-                orderBy: TotalSupplyAssetsUsd
-                first: 5
-              ) { items { state { supplyApy } } }
-            }`,
-          }),
-        });
-        const data = await res.json();
-        const items = data?.data?.markets?.items || [];
-        let best = 0;
-        for (const m of items) {
-          const apy = (m.state?.supplyApy || 0) * 100;
-          if (apy > best) best = apy;
-        }
-        setMorphoApy(best);
-      } catch (error) {
-        console.error("Failed to fetch Morpho APY:", error);
-        setMorphoApy(null);
-      } finally {
-        setIsLoadingMorpho(false);
-      }
-    }
-    fetchMorphoAPY();
-    const interval = setInterval(fetchMorphoAPY, 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // --- Compute APY percentages with error handling ---
-
-  // Aave: liquidityRate is in ray (1e27), APY = rate / 1e25
-  const aaveApy = aaveReserveData
-    ? Number((aaveReserveData as readonly unknown[])[5] as bigint) / 1e25
-    : null;
-
-  // Compound: supplyRate is per-second scaled by 1e18, APY = rate * seconds_per_year / 1e16
-  const compoundApy = compoundSupplyRate !== undefined
-    ? Number(compoundSupplyRate as bigint) * 31536000 / 1e16
-    : null;
-
-  // Moonwell: supplyRatePerTimestamp is per-second scaled by 1e18
-  const moonwellApy = moonwellSupplyRate !== undefined
-    ? Number(moonwellSupplyRate as bigint) * 31536000 / 1e16
-    : null;
+  // --- APY Demo Data (Static) ---
+  const aaveApy = DEMO_RATES.aave;
+  const compoundApy = DEMO_RATES.compound;
+  const moonwellApy = DEMO_RATES.moonwell;
+  const morphoApy = DEMO_RATES.morpho;
 
   // --- Write contracts ---
 
   const { writeContract: claimFaucet, data: faucetTxHash } = useWriteContract();
-  const { writeContract: approve, data: approveTxHash } = useWriteContract();
-  const { writeContract: depositToVault, data: depositTxHash } = useWriteContract();
   const { writeContract: requestStrategy, data: requestTxHash } = useWriteContract();
   const { writeContract: withdrawFromStrategy, data: withdrawTxHash } = useWriteContract();
   const { writeContract: redeemFromVault, data: redeemTxHash } = useWriteContract();
 
   const { isLoading: isClaiming, isSuccess: faucetSuccess } = useWaitForTransactionReceipt({ hash: faucetTxHash });
-  const { isLoading: isApproving } = useWaitForTransactionReceipt({ hash: approveTxHash });
-  const { isLoading: isDepositing } = useWaitForTransactionReceipt({ hash: depositTxHash });
   const { isLoading: isRequesting } = useWaitForTransactionReceipt({ hash: requestTxHash });
   const { isLoading: isWithdrawing } = useWaitForTransactionReceipt({ hash: withdrawTxHash });
   const { isLoading: isRedeeming } = useWaitForTransactionReceipt({ hash: redeemTxHash });
 
-  // Refetch balance + cooldown after faucet claim lands on-chain
+  // Refetch cooldown after faucet claim lands on-chain
   useEffect(() => {
     if (faucetSuccess) {
-      refetchUsdc();
       refetchCooldown();
     }
-  }, [faucetSuccess, refetchUsdc, refetchCooldown]);
+  }, [faucetSuccess, refetchCooldown]);
+
+  // Refetch vault balance when deposit flow reaches success
+  useEffect(() => {
+    if (deposit.step === "success") {
+      refetchVault();
+    }
+  }, [deposit.step, refetchVault]);
 
   // --- Derived values ---
 
-  const parsedAmount = amount ? parseUnits(amount, 6) : 0n;
-  const needsApproval = allowance !== undefined && parsedAmount > (allowance as bigint);
   const canClaim = cooldownRemaining !== undefined && (cooldownRemaining as bigint) === 0n;
 
   const pos = position as
@@ -312,129 +176,6 @@ export default function AppPage() {
     } catch (err) {
       console.error("[Faucet] ❌ Error:", err);
       alert("Faucet claim failed: " + (err instanceof Error ? err.message : String(err)));
-    }
-  }
-
-  function handleApprove() {
-    console.log("[Approve] Starting USDC approval flow...");
-    try {
-      if (!address) {
-        console.error("[Approve] ❌ Wallet not connected");
-        alert("Please connect your wallet");
-        return;
-      }
-
-      if (parsedAmount <= 0n) {
-        console.error("[Approve] ❌ Amount must be greater than 0");
-        alert("Please enter a valid amount");
-        return;
-      }
-
-      console.log("[Approve] 📊 Details:", {
-        wallet: address,
-        spender: VAULT_ADDRESS,
-        amount: formatUnits(parsedAmount, 6) + " USDC",
-        parsedAmount: parsedAmount.toString(),
-      });
-
-      approve({
-        address: USDC_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: "approve",
-        args: [VAULT_ADDRESS, parsedAmount],
-      });
-      console.log("[Approve] ✅ Approval transaction submitted");
-    } catch (err) {
-      console.error("[Approve] ❌ Error:", err);
-      alert("Approval failed: " + (err instanceof Error ? err.message : String(err)));
-    }
-  }
-
-  function handleDeposit() {
-    console.log("[Deposit] ═══════════════════════════════════════");
-    console.log("[Deposit] Starting deposit flow...");
-    
-    try {
-      // 1. Validate wallet connection
-      if (!address) {
-        console.error("[Deposit] ❌ Wallet not connected");
-        alert("Please connect your wallet first");
-        return;
-      }
-      console.log("[Deposit] ✅ Wallet connected:", address);
-
-      // 2. Validate amount
-      if (parsedAmount <= 0n) {
-        console.error("[Deposit] ❌ Invalid amount", { parsedAmount });
-        alert("Please enter amount > 0 USDC");
-        return;
-      }
-      console.log("[Deposit] ✅ Amount valid:", formatUnits(parsedAmount, 6), "USDC");
-
-      // 3. Validate minimum deposit
-      const MIN_DEPOSIT = parseUnits("10", 6);
-      if (parsedAmount < MIN_DEPOSIT) {
-        console.error("[Deposit] ❌ Amount below minimum", { 
-          amount: formatUnits(parsedAmount, 6),
-          minimum: "10",
-        });
-        alert("Minimum deposit is 10 USDC");
-        return;
-      }
-      console.log("[Deposit] ✅ Amount meets minimum");
-
-      // 4. Validate USDC balance
-      if (usdcBalance !== undefined) {
-        if ((usdcBalance as bigint) < parsedAmount) {
-          console.error("[Deposit] ❌ Insufficient USDC balance", {
-            balance: formatUnits(usdcBalance as bigint, 6),
-            required: formatUnits(parsedAmount, 6),
-          });
-          alert(`Insufficient balance. You have ${formatUnits(usdcBalance as bigint, 6)} USDC`);
-          return;
-        }
-        console.log("[Deposit] ✅ USDC balance sufficient:", formatUnits(usdcBalance as bigint, 6));
-      } else {
-        console.warn("[Deposit] ⚠️  Balance not loaded yet, proceeding...");
-      }
-
-      // 5. Validate approval
-      if (needsApproval) {
-        console.error("[Deposit] ❌ USDC not approved yet. Click 'Approve USDC' first");
-        alert("Please approve USDC spending first");
-        return;
-      }
-      console.log("[Deposit] ✅ USDC already approved");
-
-      // 6. Validate contract addresses
-      if (VAULT_ADDRESS === "0x0000000000000000000000000000000000000000") {
-        console.error("[Deposit] ❌ Vault address not configured");
-        alert("Error: Vault address not configured. Check NEXT_PUBLIC_VAULT_ADDRESS");
-        return;
-      }
-      console.log("[Deposit] ✅ Vault address valid:", VAULT_ADDRESS);
-
-      // 7. All checks passed - submit transaction
-      console.log("[Deposit] 📤 Submitting deposit transaction...");
-      console.log("[Deposit] Transaction args:", {
-        to: VAULT_ADDRESS,
-        functionName: "deposit",
-        args: [parsedAmount.toString(), address],
-      });
-
-      depositToVault({
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: "deposit",
-        args: [parsedAmount, address],
-      });
-
-      console.log("[Deposit] ✅ Transaction submitted to wallet");
-      console.log("[Deposit] ═══════════════════════════════════════");
-    } catch (err) {
-      console.error("[Deposit] ❌ Error in handleDeposit:", err);
-      console.error("[Deposit] Stack:", err instanceof Error ? err.stack : "N/A");
-      alert("Deposit failed: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 
@@ -580,8 +321,8 @@ export default function AppPage() {
             Vault: {VAULT_ADDRESS?.slice(0, 10)}...
           </div>
           <div className="text-gray-500">
-            <span className={usdcBalance !== undefined ? "text-green-400" : "text-yellow-400"}>● </span>
-            USDC Balance: {usdcBalance !== undefined ? formatUnits(usdcBalance as bigint, 6) : "🔄 Loading..."}
+            <span className={deposit.usdcBalance !== undefined ? "text-green-400" : "text-yellow-400"}>● </span>
+            USDC Balance: {deposit.usdcBalance !== undefined ? formatUnits(deposit.usdcBalance, 6) : "🔄 Loading..."}
           </div>
         </div>
       )}
@@ -631,7 +372,7 @@ export default function AppPage() {
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
           <div className="text-sm text-gray-500 mb-1">Wallet Balance</div>
           <div className="text-xl font-mono">
-            {usdcBalance !== undefined ? formatUnits(usdcBalance as bigint, 6) : "0.00"}{" "}
+            {deposit.usdcBalance !== undefined ? formatUnits(deposit.usdcBalance, 6) : "0.00"}{" "}
             <span className="text-sm text-gray-500">USDC</span>
           </div>
         </div>
@@ -646,14 +387,17 @@ export default function AppPage() {
         </div>
       </div>
 
-      {/* Live Protocol APYs */}
+      {/* Live Protocol Rates — Demo Mode */}
       <div className="mb-8">
-        <h3 className="text-sm font-medium text-gray-400 mb-3">Live Protocol Rates (Base)</h3>
-      <div className="grid grid-cols-2 gap-3">
-          <APYCard name="Aave V3" apy={aaveApy} isLoading={isLoadingAave} color="text-purple-400" />
-          <APYCard name="Compound V3" apy={compoundApy} isLoading={isLoadingCompoundAll} color="text-green-400" />
-          <APYCard name="Moonwell" apy={moonwellApy} isLoading={isLoadingMoonwell} color="text-blue-400" />
-          <APYCard name="Morpho" apy={morphoApy} isLoading={isLoadingMorpho} color="text-orange-400" />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-gray-400">Live Protocol Rates (Base)</h3>
+          <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded">Demo</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <APYCard key="aave" name="Aave V3" apy={aaveApy} isLoading={false} isError={false} color="text-purple-400" />
+          <APYCard key="compound" name="Compound V3" apy={compoundApy} isLoading={false} isError={false} color="text-green-400" />
+          <APYCard key="moonwell" name="Moonwell" apy={moonwellApy} isLoading={false} isError={false} color="text-blue-400" />
+          <APYCard key="morpho" name="Morpho" apy={morphoApy} isLoading={false} isError={false} color="text-orange-400" />
         </div>
       </div>
 
@@ -699,7 +443,7 @@ export default function AppPage() {
       )}
 
       {/* Redeem from vault (when funds are in vault but not deployed) */}
-      {vaultBalance && (vaultBalance as bigint) > 0n && !pos?.isActive && !hasActiveRequest && (
+      {!!vaultBalance && (vaultBalance as bigint) > 0n && !pos?.isActive && !hasActiveRequest && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
           <div className="flex items-center justify-between">
             <div>
@@ -728,18 +472,20 @@ export default function AppPage() {
           <div className="flex gap-2">
             <input
               type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              value={deposit.amount}
+              onChange={(e) => deposit.setAmount(e.target.value)}
               placeholder="0.00"
               min="10"
               step="0.01"
-              className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white font-mono text-lg focus:outline-none focus:border-blue-500 transition-colors"
+              disabled={deposit.isPending}
+              className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white font-mono text-lg focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-60"
             />
             <button
               onClick={() => {
-                if (usdcBalance) setAmount(formatUnits(usdcBalance as bigint, 6));
+                if (deposit.usdcBalance) deposit.setAmount(formatUnits(deposit.usdcBalance, 6));
               }}
-              className="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+              disabled={deposit.isPending}
+              className="px-4 py-3 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-sm text-gray-300 transition-colors"
             >
               Max
             </button>
@@ -747,47 +493,65 @@ export default function AppPage() {
           <p className="text-xs text-gray-500 mt-1">Minimum deposit: 10 USDC</p>
         </div>
 
-        {/* Approve / Deposit Buttons */}
+        {/* Network Warning (shown proactively before user clicks) */}
+        {deposit.networkError && (
+          <div className="mb-4 bg-red-900/20 border border-red-800/50 px-4 py-3 rounded-lg flex items-center justify-between gap-3">
+            <p className="text-sm text-red-400">{deposit.networkError}</p>
+            <button
+              onClick={deposit.switchNetwork}
+              className="flex-shrink-0 text-xs font-medium bg-red-800/50 hover:bg-red-700/60 text-red-200 px-3 py-1.5 rounded-md transition-colors"
+            >
+              Switch Network
+            </button>
+          </div>
+        )}
+
+        {/* State Machine Action Button */}
         <div className="space-y-3">
-          {parsedAmount > 0n && needsApproval && (
-            <>
-              <button
-                onClick={handleApprove}
-                disabled={isApproving}
-                className="w-full bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg transition-colors"
-              >
-                {isApproving ? "Approving USDC..." : "Approve USDC"}
-              </button>
-              <p className="text-xs text-gray-500">
-                First, you need to approve Kairos Vault to spend your USDC. This is a one-time security check.
-              </p>
-            </>
+          {deposit.step === "success" ? (
+            <div className="w-full bg-green-900/30 border border-green-700/50 text-green-400 font-medium py-3 rounded-lg text-center">
+              Deposit successful!
+            </div>
+          ) : (
+            <button
+              onClick={deposit.handleAction}
+              disabled={!deposit.canSubmit}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition-colors"
+            >
+              {deposit.step === "approving"
+                ? "Approving USDC..."
+                : deposit.step === "depositing"
+                  ? "Depositing..."
+                  : deposit.needsApproval
+                    ? "Approve USDC"
+                    : deposit.parsedAmount > 0n
+                      ? `Deposit ${deposit.amount} USDC`
+                      : "Enter an amount"}
+            </button>
           )}
 
-          {parsedAmount > 0n && !needsApproval && (
-            <>
-              <button
-                onClick={handleDeposit}
-                disabled={isDepositing || !address || VAULT_ADDRESS === "0x0000000000000000000000000000000000000000"}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition-colors"
-              >
-                {isDepositing ? "Depositing..." : `Deposit ${amount} USDC`}
-              </button>
-              {!address && <p className="text-xs text-red-400">❌ Wallet not connected</p>}
-              {VAULT_ADDRESS === "0x0000000000000000000000000000000000000000" && <p className="text-xs text-red-400">❌ Vault address not configured</p>}
-            </>
-          )}
-
-          {parsedAmount === 0n && (
-            <p className="text-xs text-gray-500 text-center">
-              Enter an amount to deposit (minimum 10 USDC)
+          {deposit.step === "approving" && (
+            <p className="text-xs text-gray-500">
+              Approving Kairos Vault to spend your USDC — this is a one-time security check.
             </p>
+          )}
+
+          {deposit.step === "error" && deposit.errorMessage && (
+            <div className="flex items-start justify-between bg-red-900/20 border border-red-800/50 p-3 rounded-lg">
+              <p className="text-sm text-red-400">{deposit.errorMessage}</p>
+              <button
+                onClick={deposit.dismissError}
+                className="ml-3 text-red-500 hover:text-red-300 text-xs shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
           )}
         </div>
       </div>
 
       {/* Optimize Section - appears after deposit when vault has balance */}
-      {vaultBalance && (vaultBalance as bigint) > 0n && !hasActiveRequest && !pos?.isActive && (
+      {!!vaultBalance && (vaultBalance as bigint) > 0n && !hasActiveRequest && !pos?.isActive && (
         <div className="border-t border-gray-800 pt-8 mt-8">
           <h3 className="text-lg font-semibold mb-2">Choose Your Target Timeline</h3>
           <p className="text-sm text-gray-400 mb-6">
@@ -851,13 +615,15 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function APYCard({ name, apy, isLoading, color }: { name: string; apy: number | null; isLoading?: boolean; color: string }) {
+function APYCard({ name, apy, isLoading, isError, color }: { name: string; apy: number | null; isLoading?: boolean; isError?: boolean; color: string }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
       <div className={`text-xs font-medium ${color} mb-1`}>{name}</div>
       <div className="text-lg font-mono">
         {isLoading ? (
           <span className="text-gray-500 text-sm">Loading...</span>
+        ) : isError ? (
+          <span className="text-red-600 text-sm">Error</span>
         ) : apy !== null ? (
           `${apy.toFixed(2)}%`
         ) : (

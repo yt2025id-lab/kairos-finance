@@ -21,6 +21,7 @@ export function useActiveWallet() {
       address: undefined as `0x${string}` | undefined,
       isConnected: false,
       wallet: undefined,
+      chainId: undefined,
     };
   }
 
@@ -34,11 +35,17 @@ function useActiveWalletWithPrivy() {
   const activeWallet = wallets[0];
   const address = activeWallet?.address as `0x${string}` | undefined;
 
+  // Privy wallet.chainId is CAIP-2 format: "eip155:84532"
+  const chainId = activeWallet?.chainId
+    ? parseInt(activeWallet.chainId.split(":")[1], 10)
+    : undefined;
+
   return {
     ready,
     authenticated,
     address,
     isConnected: ready && authenticated && !!address,
     wallet: activeWallet,
+    chainId,
   };
 }
