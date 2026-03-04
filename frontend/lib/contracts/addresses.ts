@@ -25,6 +25,19 @@ export const USDC_ADDRESS = (process.env.NEXT_PUBLIC_USDC_ADDRESS ||
   "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as `0x${string}`;
 
 /**
+ * Log contract addresses for debugging
+ */
+if (typeof window !== "undefined") {
+  console.log("[Contracts] Loaded addresses:", {
+    VAULT_ADDRESS,
+    CONTROLLER_ADDRESS,
+    USDC_ADDRESS,
+    FAUCET_ADDRESS: process.env.NEXT_PUBLIC_FAUCET_ADDRESS,
+    CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
+  });
+}
+
+/**
  * Testnet USDC faucet contract (Base Sepolia)
  * Must be set via NEXT_PUBLIC_FAUCET_ADDRESS for testnet usage
  */

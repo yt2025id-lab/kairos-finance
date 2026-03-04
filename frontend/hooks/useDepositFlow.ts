@@ -200,46 +200,77 @@ export function useDepositFlow(
 
     const validationErr = validate();
     if (validationErr) {
+      console.error("[DepositFlow] Validation error:", validationErr);
       setErrorMessage(validationErr);
       setStep("error");
       return;
     }
 
+    // Log deposit details
+    console.log("[DepositFlow] Starting deposit transaction", {
+      amount: parsedAmount.toString(),
+      address,
+      vaultAddress: VAULT_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      chainId,
+      needsApproval,
+    });
+
     if (needsApproval) {
       setStep("approving");
       try {
-        await execApprove({
+        console.log("[DepositFlow] Approving USDC...", {
+          USDC_ADDRESS,
+          VAULT_ADDRESS,
+          amount: parsedAmount.toString(),
+        });
+        
+        const approveTx = await execApprove({
           address: USDC_ADDRESS,
           abi: ERC20_ABI,
           functionName: "approve",
           args: [VAULT_ADDRESS, parsedAmount],
         });
+        
+        console.log("[DepositFlow] Approval sent:", approveTx);
         // step stays "approving" until approveConfirmed useEffect transitions it
       } catch (err) {
+        const errorMsg =
+          err instanceof Error ? err.message : String(err);
+        console.error("[DepositFlow] Approval error:", {
+          error: errorMsg,
+          fullError: err,
+        });
         setStep("error");
-        setErrorMessage(
-          err instanceof Error
-            ? err.message.split("\n")[0]
-            : "Approval rejected.",
-        );
+        setErrorMessage(errorMsg);
       }
     } else {
       setStep("depositing");
       try {
-        await execDeposit({
+        console.log("[DepositFlow] Depositing to vault...", {
+          VAULT_ADDRESS,
+          amount: parsedAmount.toString(),
+          receiver: address,
+        });
+        
+        const depositTx = await execDeposit({
           address: VAULT_ADDRESS,
           abi: VAULT_ABI,
           functionName: "deposit",
           args: [parsedAmount, address!],
         });
+        
+        console.log("[DepositFlow] Deposit sent:", depositTx);
         // step stays "depositing" until depositConfirmed useEffect transitions it
       } catch (err) {
+        const errorMsg =
+          err instanceof Error ? err.message : String(err);
+        console.error("[DepositFlow] Deposit error:", {
+          error: errorMsg,
+          fullError: err,
+        });
         setStep("error");
-        setErrorMessage(
-          err instanceof Error
-            ? err.message.split("\n")[0]
-            : "Deposit rejected.",
-        );
+        setErrorMessage(errorMsg);
       }
     }
   }
