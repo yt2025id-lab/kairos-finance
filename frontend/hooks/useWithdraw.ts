@@ -63,11 +63,11 @@ export function useWithdraw(): UseContractAction<bigint, WithdrawArgs> {
           ? BigInt(Math.floor(amountOrShares))
           : parseUSDC(amountOrShares);
 
-        const recipient = receiver || address;
+        const recipient = (receiver || address) as `0x${string}`;
 
         // Choose withdraw or redeem based on isShares
         const functionName = isShares ? "redeem" : "withdraw";
-        const args = [parsedAmount, recipient, address];
+        const args: [bigint, `0x${string}`, `0x${string}`] = [parsedAmount, recipient, address as `0x${string}`];
 
         const tx = await writeContractAsync({
           address: VAULT_ADDRESS,
