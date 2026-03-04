@@ -1,6 +1,7 @@
 /**
  * Hook for reading vault balance and position
  * Queries user's shares and position details
+ * Used for displaying vault assets and user positions
  */
 
 import { useEffect, useState } from "react";
