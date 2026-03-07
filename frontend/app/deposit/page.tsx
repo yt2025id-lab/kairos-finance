@@ -281,11 +281,15 @@ export default function AppPage() {
           }),
         });
         const data = await res.json();
-        const items = data?.data?.markets?.items || [];
-        let best = 0;
+        const items: { state?: { supplyApy?: number } }[] =
+          data?.data?.markets?.items || [];
+        let best: number | null = null;
         for (const m of items) {
-          const apy = (m.state?.supplyApy || 0) * 100;
-          if (apy > best) best = apy;
+          const raw = m.state?.supplyApy;
+          if (typeof raw === "number" && raw > 0) {
+            const apy = raw * 100;
+            if (best === null || apy > best) best = apy;
+          }
         }
         setMorphoApy(best);
       } catch {
@@ -304,13 +308,18 @@ export default function AppPage() {
 
     async function fetchRecommendations() {
       try {
+        // Base Sepolia RPC limits eth_getLogs to a 10,000-block range.
+        // Query the most recent 9,000 blocks to stay safely within the limit.
+        const latestBlock = await publicClient!.getBlockNumber();
+        const fromBlock = latestBlock > 9_000n ? latestBlock - 9_000n : 0n;
+
         const logs = await publicClient!.getLogs({
           address: CONTROLLER_ADDRESS as `0x${string}`,
           event: parseAbiItem(
             "event RecommendationReceived(address indexed user, uint8 protocol, uint256 allocationBps, uint256 expectedAPY, string reasoning)"
           ),
           args: { user: address },
-          fromBlock: 0n,
+          fromBlock,
           toBlock: "latest",
         });
 
