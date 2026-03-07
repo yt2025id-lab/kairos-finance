@@ -54,14 +54,33 @@ export function analyzeAndRecommend(
   }).result();
 
   if (response.statusCode !== 200) {
-    throw new Error(`Claude API error: ${response.statusCode}`);
+    const body = new TextDecoder().decode(response.body).slice(0, 300);
+    throw new Error(`Claude API error ${response.statusCode}: ${body}`);
   }
 
-  const data = JSON.parse(new TextDecoder().decode(response.body));
-  const text = data.content[0].text.trim();
+  let data: any;
+  try {
+    data = JSON.parse(new TextDecoder().decode(response.body));
+  } catch {
+    throw new Error("Failed to parse Claude API response as JSON");
+  }
+
+  if (!data?.content?.[0]?.text) {
+    throw new Error("Claude response missing content[0].text");
+  }
+
+  // Strip markdown code fences if Claude wraps the JSON
+  let text: string = data.content[0].text.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) text = fenceMatch[1].trim();
 
   // 4. Parse and validate the analysis
-  const raw = JSON.parse(text);
+  let raw: any;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error(`Claude returned non-JSON: ${text.slice(0, 200)}`);
+  }
 
   const analysis: AIAnalysis = {
     protocolId: raw.protocolId,

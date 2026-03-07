@@ -1,6 +1,6 @@
 {
   "schedule": "0 0 * * * *",
-  "vaultAddress": "0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855",
-  "controllerAddress": "0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF",
+  "vaultAddress": "0x884d48fcBff76A48Eb52A97cE836B36AfBbDF43F",
+  "controllerAddress": "0xB2d0Fe7d2Eb85b2A2d0eD3a5cEA6A61b5F69DBcB",
   "anthropicApiUrl": "https://api.anthropic.com/v1/messages"
 }

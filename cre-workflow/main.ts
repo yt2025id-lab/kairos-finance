@@ -86,6 +86,22 @@ function getBaseNetwork(): ReturnType<typeof getNetwork> {
 const BASE_NETWORK = getBaseNetwork();
 export const BASE_CHAIN_SELECTOR = BASE_NETWORK!.chainSelector.selector;
 
+/**
+ * Base Mainnet chain selector — used for live APY reads from Aave/Compound/Moonwell.
+ * Protocol contracts only exist on mainnet, even when the vault/controller are on Sepolia.
+ * Falls back to BASE_CHAIN_SELECTOR if mainnet network is unavailable.
+ */
+function getMainnetSelector(): bigint {
+  const mainnet = getNetwork({
+    chainFamily: "evm",
+    chainSelectorName: "ethereum-mainnet-base-1",
+    isTestnet: false,
+  });
+  return mainnet?.chainSelector.selector ?? BASE_CHAIN_SELECTOR;
+}
+
+export const BASE_MAINNET_CHAIN_SELECTOR = getMainnetSelector();
+
 // ============================================================
 // Event Signature
 // ============================================================

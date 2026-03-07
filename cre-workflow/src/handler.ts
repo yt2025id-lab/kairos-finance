@@ -31,7 +31,7 @@ import { buildYieldAnalysisPrompt } from "./ai/prompts.js";
 import { formatUSDC } from "./utils/encoding.js";
 import type { ProtocolAPYData, AIAnalysis } from "./ai/types.js";
 import type { Config } from "../main.js";
-import { BASE_CHAIN_SELECTOR } from "../main.js";
+import { BASE_CHAIN_SELECTOR, BASE_MAINNET_CHAIN_SELECTOR } from "../main.js";
 
 /** Return a zero-APY placeholder when a live protocol read fails. */
 function makeProtocolFallback(name: string, protocolId: number): ProtocolAPYData {
@@ -99,15 +99,18 @@ export function onStrategyRequested(
       );
     }
 
-    // 2. Create EVMClient for Base chain
+    // 2. Create EVMClients:
+    //    - evmClientMainnet: reads live APY from Base mainnet protocol contracts
+    //    - evmClient: writes report to KairosController (staging=Sepolia, prod=mainnet)
+    const evmClientMainnet = new cre.capabilities.EVMClient(BASE_MAINNET_CHAIN_SELECTOR);
     const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
 
-    // 3. Read APY from on-chain protocols (DON-level via EVMClient)
-    runtime.log("[Kairos] 📈 Reading APY data from on-chain protocols...");
+    // 3. Read APY from on-chain protocols (always from Base mainnet — real liquidity data)
+    runtime.log("[Kairos] 📈 Reading APY data from Base mainnet protocols...");
 
-    const { data: aaveAPY, ok: aaveOk } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClient, runtime), runtime);
-    const { data: compoundAPY, ok: compoundOk } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClient, runtime), runtime);
-    const { data: moonwellAPY, ok: moonwellOk } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClient, runtime), runtime);
+    const { data: aaveAPY, ok: aaveOk } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClientMainnet, runtime), runtime);
+    const { data: compoundAPY, ok: compoundOk } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClientMainnet, runtime), runtime);
+    const { data: moonwellAPY, ok: moonwellOk } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClientMainnet, runtime), runtime);
 
     const successCount = [aaveOk, compoundOk, moonwellOk].filter(Boolean).length;
     if (successCount === 0) {
@@ -141,9 +144,9 @@ export function onStrategyRequested(
     const protocols: ProtocolAPYData[] = [aaveAPY, compoundAPY, moonwellAPY];
     const prompt = buildYieldAnalysisPrompt(protocols, Number(timeHorizon), formatUSDC(amount));
 
-  let analysis: AIAnalysis;
-  try {
-    const analysis = runtime.runInNodeMode(
+    let encodedPayload: Hex;
+    try {
+      const analysis = runtime.runInNodeMode(
         (nodeRuntime: NodeRuntime<Config>) => {
           return analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey);
         },
@@ -163,7 +166,7 @@ export function onStrategyRequested(
         alternatives: analysis.alternatives,
       });
 
-      const encodedPayload = encodeAbiParameters(
+      encodedPayload = encodeAbiParameters(
         parseAbiParameters("address, uint8, uint256, uint256, string"),
         [
           user,
@@ -173,12 +176,12 @@ export function onStrategyRequested(
           reasoningPayload,
         ]
       );
-  } catch (aiErr) {
-    throw new Error(
-      `Claude AI analysis failed: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}. ` +
-      `Check Anthropic API key validity and request format.`
-    );
-  }
+    } catch (aiErr) {
+      throw new Error(
+        `Claude AI analysis failed: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}. ` +
+        `Check Anthropic API key validity and request format.`
+      );
+    }
 
     // 7. Generate signed report via DON consensus
     runtime.log("[Kairos] 📝 Generating DON-signed report...");
@@ -232,12 +235,12 @@ export function onRebalanceCheck(runtime: Runtime<Config>): string {
     runtime.log("[Kairos] ⏱️  Running periodic rebalance check...");
     runtime.log("[Kairos] ═══════════════════════════════════════");
 
-    const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
+    const evmClientMainnet = new cre.capabilities.EVMClient(BASE_MAINNET_CHAIN_SELECTOR);
 
-    runtime.log("[Kairos] 📈 Reading current protocol APYs...");
-    const { data: aave } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClient, runtime), runtime);
-    const { data: compound } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClient, runtime), runtime);
-    const { data: moonwell } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClient, runtime), runtime);
+    runtime.log("[Kairos] 📈 Reading current protocol APYs from Base mainnet...");
+    const { data: aave } = safeReadProtocol("Aave V3", 0, () => readAaveAPY(evmClientMainnet, runtime), runtime);
+    const { data: compound } = safeReadProtocol("Compound V3", 2, () => readCompoundAPY(evmClientMainnet, runtime), runtime);
+    const { data: moonwell } = safeReadProtocol("Moonwell", 3, () => readMoonwellAPY(evmClientMainnet, runtime), runtime);
 
     runtime.log("[Kairos] 📊 Current Market Snapshot:");
     runtime.log(`[Kairos]   Aave V3:     ${aave.apy.toFixed(2)}% APY (TVL: ${aave.tvl})`);
