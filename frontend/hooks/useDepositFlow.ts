@@ -8,13 +8,23 @@ import {
   useChainId,
   useSwitchChain,
 } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
+import { parseUnits, formatUnits, isAddress } from "viem";
 import {
   VAULT_ADDRESS,
   VAULT_ABI,
   USDC_ADDRESS,
   ERC20_ABI,
 } from "../lib/contracts";
+
+// Verify addresses are properly formatted at runtime
+if (typeof window !== "undefined") {
+  console.log("[DepositFlow] Address validation:", {
+    VAULT_ADDRESS_valid: isAddress(VAULT_ADDRESS),
+    VAULT_ADDRESS,
+    USDC_ADDRESS_valid: isAddress(USDC_ADDRESS),
+    USDC_ADDRESS,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // State machine types
@@ -219,10 +229,12 @@ export function useDepositFlow(
     if (needsApproval) {
       setStep("approving");
       try {
-        console.log("[DepositFlow] Approving USDC...", {
+        console.log("[DepositFlow] 🔑 Approving USDC...", {
           USDC_ADDRESS,
           VAULT_ADDRESS,
           amount: parsedAmount.toString(),
+          USDC_valid: isAddress(USDC_ADDRESS),
+          VAULT_valid: isAddress(VAULT_ADDRESS),
         });
         
         const approveTx = await execApprove({
@@ -232,12 +244,12 @@ export function useDepositFlow(
           args: [VAULT_ADDRESS, parsedAmount],
         });
         
-        console.log("[DepositFlow] Approval sent:", approveTx);
+        console.log("[DepositFlow] ✅ Approval sent:", approveTx);
         // step stays "approving" until approveConfirmed useEffect transitions it
       } catch (err) {
         const errorMsg =
           err instanceof Error ? err.message : String(err);
-        console.error("[DepositFlow] Approval error:", {
+        console.error("[DepositFlow] ❌ Approval error:", {
           error: errorMsg,
           fullError: err,
         });
@@ -247,10 +259,11 @@ export function useDepositFlow(
     } else {
       setStep("depositing");
       try {
-        console.log("[DepositFlow] Depositing to vault...", {
+        console.log("[DepositFlow] 💰 Depositing to vault...", {
           VAULT_ADDRESS,
           amount: parsedAmount.toString(),
           receiver: address,
+          VAULT_valid: isAddress(VAULT_ADDRESS),
         });
         
         const depositTx = await execDeposit({
@@ -260,12 +273,12 @@ export function useDepositFlow(
           args: [parsedAmount, address!],
         });
         
-        console.log("[DepositFlow] Deposit sent:", depositTx);
+        console.log("[DepositFlow] ✅ Deposit sent:", depositTx);
         // step stays "depositing" until depositConfirmed useEffect transitions it
       } catch (err) {
         const errorMsg =
           err instanceof Error ? err.message : String(err);
-        console.error("[DepositFlow] Deposit error:", {
+        console.error("[DepositFlow] ❌ Deposit error:", {
           error: errorMsg,
           fullError: err,
         });
