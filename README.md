@@ -2,423 +2,323 @@
 
 > **AI-Powered Yield Optimization on Base, Orchestrated by Chainlink CRE**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-orange.svg)](https://soliditylang.org/)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
-[![Chainlink CRE](https://img.shields.io/badge/Chainlink-CRE-375BD2.svg)](https://docs.chain.link/cre)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Chainlink CRE](https://img.shields.io/badge/Chainlink-CRE%20SDK%20v1.1.1-375BD2?logo=chainlink&logoColor=white)](https://docs.chain.link)
+[![Built on Base](https://img.shields.io/badge/Built%20on-Base%20Sepolia-0052FF?logo=coinbase&logoColor=white)](https://base.org)
+[![Tests](https://img.shields.io/badge/Forge%20Tests-17%2F17%20passing-brightgreen)](contracts/test/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-kairosfinance.vercel.app-blue?logo=vercel)](https://kairosfinance.vercel.app)
+
+**Hackathon:** Chainlink Convergence 2025 · **Tracks:** CRE & AI · DeFi & Tokenization
+
+| | |
+|--|--|
+| **Live App** | [kairosfinance.vercel.app](https://kairosfinance.vercel.app) |
+| **Demo Video** | _[Add YouTube link after recording]_ |
+| **Network** | Base Sepolia (Chain ID: 84532) |
 
 ---
 
-## 1. Project Overview
+## The Problem
 
-**Kairos Finance** is a DeFi yield optimization protocol built on Base. Users deposit USDC, set a time horizon, and a Chainlink CRE workflow automatically queries four lending protocols in real time, consults Claude AI for analysis, and executes the best risk-adjusted strategy on-chain — without manual intervention.
+There are **4 major USDC lending protocols on Base** — Aave V3, Compound V3, Moonwell, and Morpho. Their rates change every block based on utilization. Most users either pick one and never move, or spend hours manually comparing APYs, TVL, and risk profiles.
 
-> *Kairos* (Greek: the right moment) — because timing is everything in yield optimization.
+**The result: capital is systematically misallocated across DeFi.**
 
-### Problem
-
-The Base lending landscape is fragmented. Aave, Compound, Moonwell, and Morpho all offer different APY rates that fluctuate constantly. Choosing the right protocol requires understanding rate mechanics, protocol risk, TVL depth, and time-horizon dynamics. Most users either park funds in one protocol indefinitely or spend hours manually comparing rates.
-
-### Solution
-
-Kairos Finance automates the full decision cycle. A Chainlink CRE workflow:
-
-1. Reads live APY data directly from on-chain protocol contracts via `EVMClient`
-2. Fetches additional off-chain data via `HTTPClient` (Morpho GraphQL API)
-3. Sends all data to Claude AI with the user's time horizon and deposit size for analysis
-4. Delivers the signed recommendation on-chain via `writeReport` for automatic execution
+No existing solution uses an AI agent with real-time on-chain data, decentralized consensus, and automatic execution — until now.
 
 ---
 
-## Deployed Contracts — Base Sepolia (Chain ID: 84532)
+## The Solution
 
-> Last deployment: 2026-03-01
+Kairos Finance uses a **Chainlink CRE workflow** to orchestrate an end-to-end AI yield optimization pipeline:
+
+1. User deposits USDC into an ERC-4626 vault and selects a time horizon (1–12 months)
+2. A `StrategyRequested` on-chain event triggers the **CRE EVM Log Trigger**
+3. The CRE workflow reads **live APY data from 3 protocols** via `EVMClient` (on-chain) and **Morpho** via `HTTPClient` (off-chain GraphQL)
+4. **Claude AI** scores all 4 protocols using a weighted framework (APY, Safety, TVL, Stability) — called via `HTTPClient` inside `runInNodeMode` with `consensusIdenticalAggregation`
+5. The signed recommendation is delivered **on-chain via `writeReport`** with DON consensus
+6. `KairosController` decodes the report and deploys funds to the winning protocol automatically
+
+**Everything runs on Chainlink's DON — no centralized backend.**
+
+---
+
+## Chainlink CRE Integration
+
+### Files Using Chainlink CRE SDK
+
+> As required by hackathon submission guidelines, all Chainlink-integrated files are listed below.
+
+| File | Chainlink Component | Description |
+|------|-------------------|-------------|
+| [`cre-workflow/main.ts`](cre-workflow/main.ts) | `Runner`, `EVMClient.logTrigger`, `CronCapability.trigger` | Workflow entry point, registers both triggers |
+| [`cre-workflow/src/handler.ts`](cre-workflow/src/handler.ts) | `EVMClient`, `runtime.runInNodeMode`, `consensusIdenticalAggregation`, `prepareReportRequest`, `runtime.report`, `evmClient.writeReport`, `runtime.getSecret` | Core orchestration logic |
+| [`cre-workflow/src/ai/claude.ts`](cre-workflow/src/ai/claude.ts) | `HTTPClient.sendRequest` (NodeRuntime) | Claude AI call inside `runInNodeMode` |
+| [`cre-workflow/src/protocols/aave.ts`](cre-workflow/src/protocols/aave.ts) | `EVMClient.callContract` | On-chain Aave V3 APY read |
+| [`cre-workflow/src/protocols/compound.ts`](cre-workflow/src/protocols/compound.ts) | `EVMClient.callContract` | On-chain Compound V3 APY read |
+| [`cre-workflow/src/protocols/moonwell.ts`](cre-workflow/src/protocols/moonwell.ts) | `EVMClient.callContract` | On-chain Moonwell APY read |
+| [`cre-workflow/src/protocols/morpho.ts`](cre-workflow/src/protocols/morpho.ts) | `HTTPClient.sendRequest` (NodeRuntime) | Off-chain Morpho GraphQL APY |
+| [`cre-workflow/workflow.yaml`](cre-workflow/workflow.yaml) | CRE targets config | Staging + production workflow targets |
+| [`cre-workflow/config.staging.json`](cre-workflow/config.staging.json) | CRE runtime config | Base Sepolia vault + controller addresses |
+| [`contracts/src/controller/KairosController.sol`](contracts/src/controller/KairosController.sol) | `IReceiver.onReport` | On-chain CRE report receiver |
+
+### 7 CRE Products Used
+
+| # | Product | Where Used |
+|---|---------|-----------|
+| 1 | **CRE Workflow** (`@chainlink/cre-sdk`) | `main.ts` — `Runner.newRunner()` |
+| 2 | **EVM Log Trigger** | `main.ts` — `evmClient.logTrigger()` on `StrategyRequested` event |
+| 3 | **EVMClient** | `handler.ts`, `aave.ts`, `compound.ts`, `moonwell.ts` |
+| 4 | **HTTPClient** | `claude.ts` (AI), `morpho.ts` (GraphQL) |
+| 5 | **writeReport** | `handler.ts` — `evmClient.writeReport()` |
+| 6 | **Cron Trigger** | `main.ts` — `CronCapability.trigger()` every 6 hours |
+| 7 | **Secrets** | `handler.ts` — `runtime.getSecret({ id: "ANTHROPIC_API_KEY" })` |
+
+### Core CRE Code Patterns
+
+**EVM Log Trigger + EVMClient APY read:**
+```typescript
+// cre-workflow/main.ts
+const evmClient = new cre.capabilities.EVMClient(BASE_CHAIN_SELECTOR);
+handlers.push(cre.handler({
+  trigger: evmClient.logTrigger({
+    addresses: [config.vaultAddress],
+    topics: [{ values: [STRATEGY_REQUESTED_TOPIC] }],
+  }),
+  handler: (runtime, log) => onStrategyRequested(runtime, log),
+}));
+```
+
+**`runInNodeMode` with `consensusIdenticalAggregation` for AI call:**
+```typescript
+// cre-workflow/src/handler.ts
+const apiKey = runtime.getSecret({ id: "ANTHROPIC_API_KEY" }).result();
+
+const analysis = runtime.runInNodeMode(
+  (nodeRuntime: NodeRuntime<Config>) =>
+    analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey),
+  consensusIdenticalAggregation<AIAnalysis>()
+)().result();
+```
+
+**HTTPClient calling Claude AI (inside NodeRuntime):**
+```typescript
+// cre-workflow/src/ai/claude.ts
+const httpClient = new cre.capabilities.HTTPClient();
+const response = httpClient.sendRequest(nodeRuntime, {
+  url: "https://api.anthropic.com/v1/messages",
+  method: "POST",
+  headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+  body: btoa(JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2048, messages: [...] })),
+}).result();
+```
+
+**Signed report delivery on-chain:**
+```typescript
+// cre-workflow/src/handler.ts
+const reportRequest = prepareReportRequest(encodedPayload);
+const report = runtime.report(reportRequest).result();
+evmClient.writeReport(runtime, {
+  receiver: runtime.config.controllerAddress,
+  report,
+  gasConfig: { gasLimit: "500000" },
+}).result();
+```
+
+**On-chain receiver (`IReceiver` interface):**
+```solidity
+// contracts/src/controller/KairosController.sol
+function onReport(bytes calldata metadata, bytes calldata report) external onlyForwarder {
+    (address user, uint8 protocolId, uint256 allocationBps, uint256 expectedAPY, string memory reasoning)
+        = abi.decode(report, (address, uint8, uint256, uint256, string));
+    // ... execute strategy
+}
+```
+
+---
+
+## AI Scoring Engine
+
+Claude AI evaluates every protocol on **4 weighted dimensions** — not just highest APY:
+
+| Factor | Base Weight | Rationale |
+|--------|-------------|-----------|
+| APY | 35% | Primary yield driver |
+| Safety | 30% | Protocol maturity, audits, battle-tested history |
+| TVL Depth | 20% | Liquidity and market trust signal |
+| Stability | 15% | Rate consistency over investment horizon |
+
+**Dynamic weight adjustments based on user's time horizon:**
+- `< 30 days` → Safety +10%, APY −10% (capital preservation priority)
+- `> 90 days` → APY +10%, Safety −10% (compounding matters more)
+- `deposit > $50K` → TVL +5% (liquidity depth critical for large positions)
+
+**Output stored on-chain in `RecommendationReceived` event:**
+- `confidence` — AI certainty score (0–100)
+- `riskScore` — Overall risk assessment (0–100, higher = safer)
+- `scores[]` — Per-protocol weighted breakdown (APY, Safety, TVL, Stability)
+- `alternatives[]` — Ranked alternatives with reasoning for why not chosen
+
+---
+
+## Smart Contracts
+
+**Network:** Base Sepolia (Chain ID: 84532) · **7 deployed · 17/17 tests passing**
 
 | Contract | Address | Explorer |
-|----------|---------|---------|
-| `KairosVault` | `0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855` | [View](https://sepolia.basescan.org/address/0x5c4B8427fBF6F398C4F780711507E0AA2dEdc855) |
-| `KairosController` | `0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF` | [View](https://sepolia.basescan.org/address/0x84A7C62dAa0DE17b0f01238443d7aBB942A00bfF) |
-| `FaucetUSDC` (testnet token) | `0x4F6D082b3130745687dd200822280946125570F5` | [View](https://sepolia.basescan.org/address/0x4F6D082b3130745687dd200822280946125570F5) |
-| `AaveV3Strategy` | `0xF130CE1Ee13f48FEEBc41a4d0dD0003900C56691` | [View](https://sepolia.basescan.org/address/0xF130CE1Ee13f48FEEBc41a4d0dD0003900C56691) |
-| `CompoundV3Strategy` | `0x9A62F36d290C3A4280C4F7A8A6a51EAA1288cfD4` | [View](https://sepolia.basescan.org/address/0x9A62F36d290C3A4280C4F7A8A6a51EAA1288cfD4) |
-| `MoonwellStrategy` | `0x19406467cC6E88Bd5F5bC932907c315AcC300Ccc` | [View](https://sepolia.basescan.org/address/0x19406467cC6E88Bd5F5bC932907c315AcC300Ccc) |
-| `MorphoStrategy` | `0x32B6bA1a9Ff550C21027A0C0E39CC9CECd82B0b9` | [View](https://sepolia.basescan.org/address/0x32B6bA1a9Ff550C21027A0C0E39CC9CECd82B0b9) |
+|----------|---------|----------|
+| FaucetUSDC | `0xAb8a67C042a60FBD01ca769799941cF694ff57C9` | [Basescan ↗](https://sepolia.basescan.org/address/0xAb8a67C042a60FBD01ca769799941cF694ff57C9) |
+| KairosVault (ERC-4626) | `0x884d48fcBff76A48Eb52A97cE836B36AfBbDF43F` | [Basescan ↗](https://sepolia.basescan.org/address/0x884d48fcBff76A48Eb52A97cE836B36AfBbDF43F) |
+| KairosController | `0xB2d0Fe7d2Eb85b2A2d0eD3a5cEA6A61b5F69DBcB` | [Basescan ↗](https://sepolia.basescan.org/address/0xB2d0Fe7d2Eb85b2A2d0eD3a5cEA6A61b5F69DBcB) |
+| AaveV3Strategy | `0xeC6e6ABe3DF9B3bD471d66Bd759c63a5f8e58dEF` | [Basescan ↗](https://sepolia.basescan.org/address/0xeC6e6ABe3DF9B3bD471d66Bd759c63a5f8e58dEF) |
+| CompoundV3Strategy | `0xB94980938429bc6eE6b6E0fD4AB836652119B981` | [Basescan ↗](https://sepolia.basescan.org/address/0xB94980938429bc6eE6b6E0fD4AB836652119B981) |
+| MoonwellStrategy | `0x76bF3c419BDAf509bD6c15d8Fbf26EDA96b676ce` | [Basescan ↗](https://sepolia.basescan.org/address/0x76bF3c419BDAf509bD6c15d8Fbf26EDA96b676ce) |
+| MorphoStrategy | `0x045Ef6487EAf645B80781ac8c1504566FF419Cf0` | [Basescan ↗](https://sepolia.basescan.org/address/0x045Ef6487EAf645B80781ac8c1504566FF419Cf0) |
 
----
-
-## 2. Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **AI-Powered Yield Analysis** | Claude AI analyzes live protocol data against user parameters to recommend the optimal strategy |
-| **Chainlink CRE Orchestration** | Trustless, DON-executed workflow triggered by on-chain events — no centralized server |
-| **Multi-Protocol Strategy** | Covers Aave V3, Compound V3, Moonwell, and Morpho on Base in every analysis |
-| **ERC-4626 Vault** | Standard-compliant tokenized vault — users receive `kYLD` shares representing their position |
-| **Automated Execution** | From deposit to strategy allocation, execution is fully on-chain and verifiable |
-| **Request Timeout Safety** | Stuck requests auto-expire after 24 hours, preventing locked funds |
-
----
-
-## 3. Architecture Overview
+### Contract Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        USER (Web Frontend)                      │
-│        Deposits USDC → KairosVault (ERC-4626)                   │
-│        Calls requestStrategy(timeHorizon)                       │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │  StrategyRequested event emitted
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  CHAINLINK CRE RUNTIME (DON)                    │
-│                                                                 │
-│  EVM Log Trigger ──► Workflow Execution                         │
-│                            │                                    │
-│         ┌──────────────────┼──────────────────────┐            │
-│         │                  │                       │            │
-│  EVMClient reads    EVMClient reads        EVMClient reads      │
-│  Aave V3            Compound V3            Moonwell              │
-│  getReserveData()   getSupplyRate()        supplyRatePerTs()     │
-│         │                  │                       │            │
-│         └──────────────────┼──────────────────────┘            │
-│                            │                                    │
-│                   HTTPClient → Morpho GraphQL API               │
-│                            │                                    │
-│                   HTTPClient → Claude AI API                    │
-│                   (ANTHROPIC_API_KEY via CRE Secrets)           │
-│                            │                                    │
-│               Claude returns structured JSON                    │
-│               { protocolId, allocationBps, expectedAPY }        │
-│                            │                                    │
-│                  writeReport → KairosController                 │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │  onReport() called
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    ON-CHAIN EXECUTION                           │
-│                                                                 │
-│  KairosController decodes report                                │
-│        │                                                        │
-│        └──► Strategy Adapter (Aave / Compound / Moonwell / Morpho)
-│                    │                                            │
-│                    └──► Funds deposited into chosen protocol    │
-└─────────────────────────────────────────────────────────────────┘
+KairosVault (ERC-4626)
+  └── requestStrategy(timeHorizon) ──► emits StrategyRequested
+                                              │
+                                    CRE EVM Log Trigger
+                                              │
+                                    CRE Workflow runs...
+                                              │
+                                    writeReport on-chain
+                                              │
+KairosController (IReceiver)  ◄──────────────┘
+  └── onReport(metadata, report)
+      ├── decode (address, uint8, uint256, uint256, string)
+      ├── emit RecommendationReceived(user, protocol, apy, reasoning)
+      ├── call vault.executeStrategy(user, strategy, amount)
+      │
+      └── Strategy Adapters:
+          ├── AaveV3Strategy.deposit(user, amount)
+          ├── CompoundV3Strategy.deposit(user, amount)
+          ├── MoonwellStrategy.deposit(user, amount)
+          └── MorphoStrategy.deposit(user, amount)
 ```
 
-### CRE Runtime Role
-
-The Chainlink CRE (Runtime Environment) replaces a traditional backend server with a decentralized DON that:
-- Watches for on-chain events via `EVMClient.logTrigger`
-- Executes off-chain API calls via `HTTPClient` with BFT consensus
-- Delivers signed results on-chain via `writeReport`
-- Runs periodic rebalance checks via `CronCapability`
-
----
-
-## 4. Tech Stack
-
-### Smart Contracts
-
-| Component | Technology |
-|-----------|-----------|
-| Language | Solidity 0.8.24 |
-| Framework | Foundry |
-| Vault Standard | ERC-4626 (OpenZeppelin v5) |
-| Token Safety | SafeERC20 |
-
-### CRE Workflow
-
-| Component | Technology |
-|-----------|-----------|
-| Runtime | Chainlink CRE (`@chainlink/cre-sdk`) |
-| Language | TypeScript (ESM) |
-| AI Model | Claude Sonnet (`claude-sonnet-4-6`) |
-| Validation | Zod schema validation |
-| EVM Utilities | viem v2 |
-
-### Frontend
-
-| Component | Technology |
-|-----------|-----------|
-| Framework | Next.js 15 (App Router) |
-| Web3 | wagmi v2 + viem v2 |
-| Authentication | Privy v3 (email + embedded wallet) |
-| Data Fetching | TanStack Query v5 |
-| Styling | Tailwind CSS v4 |
-
-### Network
-
-| Network | Chain ID | Purpose |
-|---------|----------|---------|
-| Base Mainnet | 8453 | Production |
-| Base Sepolia | 84532 | Testnet / Development |
+### Security
+- ERC-4626 inflation attack prevention via `_decimalsOffset(6)`
+- One active request per user — prevents double-execution
+- 24-hour timeout via `cancelTimedOutRequest()`
+- `onlyForwarder` modifier — only Chainlink Forwarder can call `onReport`
+- `SafeERC20` on all token transfers
+- AI recommendation validated on-chain before execution
 
 ---
 
-## 5. Project Structure
+## Repository Structure
 
 ```
 kairos-finance/
-├── contracts/                  Foundry smart contracts
-│   ├── src/
-│   │   ├── vault/              KairosVault.sol — ERC-4626 deposit vault
-│   │   ├── controller/         KairosController.sol — CRE IReceiver consumer
-│   │   ├── strategies/         Protocol adapters (Aave, Compound, Moonwell, Morpho)
-│   │   ├── interfaces/         External protocol interfaces
-│   │   └── libraries/          DataTypes.sol, ProtocolRegistry.sol
-│   ├── script/
-│   │   ├── DeployTestnet.s.sol Deploys to Base Sepolia
-│   │   ├── Deploy.s.sol        Deploys to Base Mainnet
-│   │   └── DemoE2E.s.sol       End-to-end demonstration script
-│   └── test/                   17 unit tests (100% passing)
-│
-├── cre-workflow/               Chainlink CRE TypeScript workflow
-│   ├── main.ts                 Workflow entry point and trigger registration
-│   ├── workflow.yaml           CRE deployment targets (staging / production)
-│   ├── config.json             Production config (Base Mainnet)
-│   ├── config.staging.json     Staging config (Base Sepolia)
-│   ├── secrets.yaml            CRE Secrets declaration (names only, no values)
+├── cre-workflow/                    # Chainlink CRE SDK workflow
+│   ├── main.ts                      # Runner, EVM Log Trigger, Cron Trigger
+│   ├── workflow.yaml                # CRE targets (staging + production)
+│   ├── config.staging.json          # Base Sepolia runtime config
+│   ├── config.json                  # Base mainnet config
 │   └── src/
-│       ├── handler.ts          Core orchestration logic
-│       ├── protocols/          APY readers — aave.ts, compound.ts, moonwell.ts, morpho.ts
-│       ├── ai/                 Claude integration — claude.ts, prompts.ts, types.ts
-│       └── utils/              ABI encoding helpers
+│       ├── handler.ts               # onStrategyRequested, onRebalanceCheck
+│       ├── ai/
+│       │   ├── claude.ts            # Claude AI via CRE HTTPClient
+│       │   ├── prompts.ts           # Weighted scoring prompt engine
+│       │   └── types.ts             # AIAnalysis, ProtocolScore, etc.
+│       ├── protocols/
+│       │   ├── aave.ts              # Aave V3 APY via EVMClient
+│       │   ├── compound.ts          # Compound V3 APY via EVMClient
+│       │   ├── moonwell.ts          # Moonwell APY via EVMClient
+│       │   └── morpho.ts            # Morpho APY via HTTPClient (GraphQL)
+│       └── utils/encoding.ts
 │
-├── frontend/                   Next.js web application
-│   ├── app/                    Pages — landing, deposit/dashboard
-│   ├── components/             NetworkGuard, LoginButton, TransactionButton, etc.
-│   ├── hooks/                  useDeposit, useWithdraw, useRequestStrategy, useVaultBalance
-│   ├── lib/
-│   │   ├── wagmi.ts            wagmi config with RPC fallback
-│   │   └── contracts/          ABIs, addresses, contract helpers
-│   └── .env.example            Environment variable template
+├── contracts/                       # Solidity — Foundry
+│   ├── src/
+│   │   ├── vault/KairosVault.sol    # ERC-4626 vault + requestStrategy
+│   │   ├── controller/
+│   │   │   └── KairosController.sol # IReceiver — CRE report handler
+│   │   └── strategies/              # Protocol adapters (4 contracts)
+│   ├── test/                        # 17 Forge unit tests
+│   └── script/DemoE2E.s.sol         # 6-step E2E on-chain demo
 │
-└── docs/
-    ├── README.md               Full technical documentation
-    └── CHAINLINK_INTEGRATION.md Detailed Chainlink integration reference
+└── frontend/                        # Next.js 16
+    ├── app/deposit/page.tsx          # Live APY + AI Analysis + History
+    ├── components/LoginButton.tsx    # Privy auth
+    ├── hooks/useActiveWallet.ts
+    └── lib/
+        ├── contracts.ts             # ABIs + deployed addresses
+        └── wagmi.ts                 # wagmi config (Base Sepolia + Base)
 ```
 
 ---
 
-## 6. Getting Started
+## Quick Start
 
 ### Prerequisites
-
-- [Node.js 18+](https://nodejs.org/)
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) — `curl -L https://foundry.paradigm.xyz | bash`
-- [Bun](https://bun.sh) (frontend) — `curl -fsSL https://bun.sh/install | bash`
-
----
+- [Foundry](https://getfoundry.sh/)
+- Node.js 18+
+- Base Sepolia ETH → [QuickNode faucet](https://faucet.quicknode.com/base/sepolia)
 
 ### Smart Contracts
 
 ```bash
 cd contracts
-
-# Install dependencies
-forge install
-
-# Build
 forge build
-
-# Run tests
 forge test -vv
-
-# Deploy to Base Sepolia
-cp .env.example .env
-# Fill in PRIVATE_KEY and BASE_SEPOLIA_RPC_URL
-forge script script/DeployTestnet.s.sol \
-  --rpc-url $BASE_SEPOLIA_RPC_URL \
-  --broadcast -vvvv
+# Expected: 17/17 tests pass
 ```
-
----
 
 ### CRE Workflow
 
 ```bash
 cd cre-workflow
-
-# Install dependencies
 npm install
-
-# Build TypeScript
 npm run build
-
-# Simulate locally (requires cre CLI)
-npm run simulate
-
-# Deploy to Chainlink DON (requires CRE credentials)
-npm run deploy
+# Requires @chainlink/cre-sdk — see workflow.yaml for CRE targets
 ```
-
-> **Important**: The CRE workflow runs on the Chainlink DON. Set `ANTHROPIC_API_KEY` via CRE Secrets — never as a plain environment variable. See [docs/CHAINLINK_INTEGRATION.md](docs/CHAINLINK_INTEGRATION.md) for full setup instructions.
-
----
 
 ### Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
-bun install
-
-# Configure environment
-cp .env.example .env.local
-# Fill in required values — see Environment Variables section
-
-# Start development server
-bun run dev
+npm install
+cp .env.local.example .env.local
+# Set NEXT_PUBLIC_PRIVY_APP_ID in .env.local
+npm run dev
+# Open http://localhost:3000/deposit
 ```
 
----
-
-## 7. Environment Variables
-
-Copy `frontend/.env.example` to `frontend/.env.local` and configure the values below.
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `NEXT_PUBLIC_VAULT_ADDRESS` | Deployed `KairosVault` contract address |
-| `NEXT_PUBLIC_CONTROLLER_ADDRESS` | Deployed `KairosController` contract address |
-| `NEXT_PUBLIC_CHAIN_ID` | Target chain (`8453` = Base Mainnet, `84532` = Base Sepolia) |
-| `NEXT_PUBLIC_PRIVY_APP_ID` | Privy app ID — get one at [console.privy.io](https://console.privy.io) |
-
-### Optional
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NEXT_PUBLIC_BASE_RPC` | Custom Base Mainnet RPC (Alchemy, Infura, QuickNode, etc.) | Public Base RPC |
-| `NEXT_PUBLIC_BASE_SEPOLIA_RPC` | Custom Base Sepolia RPC | Public Sepolia RPC |
-| `NEXT_PUBLIC_USDC_ADDRESS` | USDC token address override | Base Mainnet USDC |
-| `NEXT_PUBLIC_FAUCET_ADDRESS` | Testnet faucet address (Sepolia only) | — |
-
-> **Never commit `.env.local` or any file containing real values.**
-
----
-
-## 8. Security Considerations
-
-| Concern | Mitigation |
-|---------|-----------|
-| **API Key Management** | `ANTHROPIC_API_KEY` is stored exclusively via CRE Secrets — never hardcoded in workflow code or committed to git |
-| **Forwarder Authorization** | `KairosController.onReport()` only accepts calls from the registered Chainlink Forwarder address, preventing spoofed recommendations |
-| **Strategy Validation** | `allocationBps` must be ≤ 10,000 and `protocolId` must reference a registered strategy; invalid reports revert |
-| **AI Response Validation** | Claude's JSON response is validated against a Zod schema before any on-chain encoding is performed |
-| **Inflation Attack Prevention** | `KairosVault` uses `_decimalsOffset()` to prevent ERC-4626 share inflation attacks |
-| **Request Spam Prevention** | One active strategy request per user; duplicate calls revert |
-| **Stuck Request Recovery** | Requests auto-expire after 24 hours, allowing re-requests without funds being locked |
-| **Safe Token Transfers** | All ERC20 operations use OpenZeppelin `SafeERC20` throughout the strategy adapters |
-| **Environment Files** | All secret-bearing files excluded from git via `.gitignore` |
-
----
-
-## 9. Demo / E2E Script
-
-A Forge script proves the complete flow on Base Sepolia in six automated steps:
+### End-to-End Demo (Base Sepolia)
 
 ```bash
 cd contracts
-
-# Requires .env with PRIVATE_KEY and BASE_SEPOLIA_RPC_URL
+export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 forge script script/DemoE2E.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL \
   --broadcast -vvvv
+# Executes: faucet → deposit → requestStrategy → onReport → verify → withdraw
 ```
-
-| Step | Action |
-|------|--------|
-| 1 | Claim testnet USDC from the faucet |
-| 2 | Approve and deposit USDC into `KairosVault` |
-| 3 | Call `requestStrategy(timeHorizon)` — emits `StrategyRequested` |
-| 4 | Simulate CRE report delivery via `controller.onReport()` |
-| 5 | Verify position is active and correctly allocated |
-| 6 | Withdraw funds from the strategy |
-
-**Script**: [`contracts/script/DemoE2E.s.sol`](contracts/script/DemoE2E.s.sol)
 
 ---
 
-## 10. Private & Sensitive Files Policy
+## Tech Stack
 
-The following files must **never** be committed to version control:
-
-| File | Reason |
-|------|--------|
-| `frontend/.env.local` | Contains contract addresses, Privy app ID, and RPC URLs |
-| `contracts/.env` | Contains deployer private key and RPC endpoints |
-| `cre-workflow/secrets.yaml` with values | Values are injected by CRE runtime — the file must declare names only |
-
-### `.gitignore` Requirements
-
-```gitignore
-# Environment files
-.env
-.env.local
-.env.*
-!.env.example
-
-# Build artifacts
-node_modules/
-dist/
-build/
-.next/
-out/
-
-# Test coverage
-coverage/
-```
-
-### CRE Secrets
-
-`ANTHROPIC_API_KEY` is managed entirely through Chainlink CRE Secrets. The `secrets.yaml` file declares the secret name only — no values — and is safe to commit:
-
-```yaml
-secrets:
-  ANTHROPIC_API_KEY:
-    description: "Anthropic API key for Claude AI yield analysis"
-    env: ANTHROPIC_API_KEY
-```
-
-The actual key is uploaded via the CRE CLI or dashboard and is never stored in this repository.
-
----
-
-## Smart Contract Tests
-
-17/17 tests passing. Run with:
-
-```bash
-cd contracts && forge test -vv
-```
-
-```
-[PASS] test_cancelTimedOutRequest()
-[PASS] test_cancelTimedOutRequest_revertIfNotTimedOut()
-[PASS] test_deposit()
-[PASS] test_depositMultipleUsers()
-[PASS] test_executeStrategy()
-[PASS] test_executeStrategy_revertIfNotController()
-[PASS] test_onReport_revertIfInvalidAllocation()
-[PASS] test_onReport_revertIfNotForwarder()
-[PASS] test_onReport_revertIfStrategyNotRegistered()
-[PASS] test_requestStrategy()
-[PASS] test_requestStrategy_revertIfActiveRequest()
-[PASS] test_requestStrategy_revertIfControllerNotSet()
-[PASS] test_requestStrategy_revertIfInvalidTimeHorizon()
-[PASS] test_requestStrategy_revertIfNoDeposit()
-[PASS] test_setController_revertIfNotOwner()
-[PASS] test_setController_revertIfZeroAddress()
-[PASS] test_withdraw()
-
-Suite result: ok. 17 passed; 0 failed; 0 skipped
-```
+| Layer | Technology |
+|-------|-----------|
+| Blockchain | Base L2 (Ethereum) |
+| Smart Contracts | Solidity 0.8.24, Foundry, OpenZeppelin v5 |
+| CRE Orchestration | `@chainlink/cre-sdk` v1.1.1 |
+| AI Engine | Claude Sonnet 4.6 (Anthropic) |
+| Frontend | Next.js 16, React 19, Tailwind CSS |
+| Auth | Privy (email · wallet · Google OAuth) |
+| Web3 | wagmi v2, viem v2 |
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+MIT
+
+---
+
+*Chainlink Convergence 2025 Hackathon · CRE & AI Track · DeFi & Tokenization Track*

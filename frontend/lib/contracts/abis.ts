@@ -213,4 +213,13 @@ export const CONTROLLER_ABI = [
       { name: "reasoning", type: "string", indexed: false },
     ],
   },
+  {
+    name: "StrategyExecuted",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "strategy", type: "address", indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;

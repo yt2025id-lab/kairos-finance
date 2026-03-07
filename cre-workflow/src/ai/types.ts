@@ -24,6 +24,35 @@ export const AIRecommendationSchema = z.object({
   reasoning: z.string().min(1).max(2000),
 });
 
+export interface ProtocolScore {
+  protocolId: number;
+  name: string;
+  apyScore: number;
+  safetyScore: number;
+  tvlScore: number;
+  stabilityScore: number;
+  weightedTotal: number;
+}
+
+export interface ProtocolAlternative {
+  protocolId: number;
+  name: string;
+  expectedAPY: number;
+  weightedScore: number;
+  reason: string;
+}
+
+export interface AIAnalysis {
+  protocolId: number;
+  allocationBps: number;
+  expectedAPY: number;
+  confidence: number;
+  riskScore: number;
+  reasoning: string;
+  scores: ProtocolScore[];
+  alternatives: ProtocolAlternative[];
+}
+
 export interface StrategyRequestEvent {
   user: `0x${string}`;
   amount: bigint;

@@ -29,7 +29,7 @@ import { readMoonwellAPY } from "./protocols/moonwell.js";
 import { analyzeAndRecommend } from "./ai/claude.js";
 import { buildYieldAnalysisPrompt } from "./ai/prompts.js";
 import { formatUSDC } from "./utils/encoding.js";
-import type { ProtocolAPYData, AIRecommendation } from "./ai/types.js";
+import type { ProtocolAPYData, AIAnalysis } from "./ai/types.js";
 import type { Config } from "../main.js";
 import { BASE_CHAIN_SELECTOR } from "../main.js";
 
@@ -141,47 +141,44 @@ export function onStrategyRequested(
     const protocols: ProtocolAPYData[] = [aaveAPY, compoundAPY, moonwellAPY];
     const prompt = buildYieldAnalysisPrompt(protocols, Number(timeHorizon), formatUSDC(amount));
 
-    let recommendation: AIRecommendation;
-    try {
-      recommendation = runtime.runInNodeMode(
+  let analysis: AIAnalysis;
+  try {
+    const analysis = runtime.runInNodeMode(
         (nodeRuntime: NodeRuntime<Config>) => {
           return analyzeAndRecommend(nodeRuntime, protocols, prompt, apiKey);
         },
-        consensusIdenticalAggregation<AIRecommendation>()
+        consensusIdenticalAggregation<AIAnalysis>()
       )().result();
-    } catch (aiErr) {
-      throw new Error(
-        `Claude AI analysis failed: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}. ` +
-        `Check Anthropic API key validity and request format.`
+
+      runtime.log(
+        `[Kairos] AI Recommendation: Protocol ${analysis.protocolId}, APY ${analysis.expectedAPY} bps, Confidence: ${analysis.confidence}/100, Risk: ${analysis.riskScore}/100`
       );
-    }
 
-    runtime.log(`[Kairos] ✅ AI Recommendation received:`);
-    runtime.log(`[Kairos]   Protocol: ${recommendation.protocolId}`);
-    runtime.log(`[Kairos]   Allocation: ${recommendation.allocationBps} bps`);
-    runtime.log(`[Kairos]   Expected APY: ${recommendation.expectedAPY}`);
-    runtime.log(`[Kairos]   Confidence: ${recommendation.confidence}`);
+      // 6. Serialize full analysis as JSON into reasoning field (backward-compatible with on-chain encoding)
+      const reasoningPayload = JSON.stringify({
+        summary: analysis.reasoning,
+        confidence: analysis.confidence,
+        riskScore: analysis.riskScore,
+        scores: analysis.scores,
+        alternatives: analysis.alternatives,
+      });
 
-    // 6. Encode recommendation for on-chain delivery
-    runtime.log("[Kairos] 🔐 Encoding recommendation payload...");
-    let encodedPayload: Hex;
-    try {
-      encodedPayload = encodeAbiParameters(
+      const encodedPayload = encodeAbiParameters(
         parseAbiParameters("address, uint8, uint256, uint256, string"),
         [
           user,
-          recommendation.protocolId,
-          BigInt(recommendation.allocationBps),
-          BigInt(recommendation.expectedAPY),
-          recommendation.reasoning,
+          analysis.protocolId,
+          BigInt(analysis.allocationBps),
+          BigInt(analysis.expectedAPY),
+          reasoningPayload,
         ]
       );
-      runtime.log(`[Kairos] ✅ Payload encoded (${encodedPayload.length} bytes)`);
-    } catch (encodeErr) {
-      throw new Error(
-        `Failed to encode recommendation: ${encodeErr instanceof Error ? encodeErr.message : String(encodeErr)}`
-      );
-    }
+  } catch (aiErr) {
+    throw new Error(
+      `Claude AI analysis failed: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}. ` +
+      `Check Anthropic API key validity and request format.`
+    );
+  }
 
     // 7. Generate signed report via DON consensus
     runtime.log("[Kairos] 📝 Generating DON-signed report...");
